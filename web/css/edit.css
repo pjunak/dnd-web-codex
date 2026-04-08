@@ -1,0 +1,474 @@
+/* ═══════════════════════════════════════════════════════════════
+   EDIT MODE — construction stripe, controls, forms, overlays
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Edit mode active indicator — construction stripe on all edges ── */
+body.edit-mode::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  border: 7px solid transparent;
+  border-image: repeating-linear-gradient(
+    -45deg,
+    #f5a623 0px,  #f5a623 9px,
+    #1a1510 9px,  #1a1510 18px
+  ) 7;
+  pointer-events: none;
+  z-index: 9998;
+}
+
+/* ── Sidebar footer buttons ──────────────────────────────────── */
+.sidebar-footer {
+  margin-top: auto;
+  padding: 0.75rem 0.75rem 1rem;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.edit-mode-toggle {
+  width: 100%;
+  background: var(--bg-raised);
+  border: 1px solid rgba(200,160,64,0.25);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  text-align: left;
+}
+.edit-mode-toggle:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
+.edit-mode-toggle.active {
+  background: rgba(200,160,64,0.12);
+  border-color: var(--accent-gold);
+  color: var(--accent-gold);
+  font-weight: 500;
+}
+.sidebar-export-btn {
+  background: none;
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.75rem;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  text-align: left;
+}
+.sidebar-export-btn:hover { border-color: rgba(200,160,64,0.3); color: var(--text-light); }
+
+/* ── Bottom nav edit toggle ──────────────────────────────────── */
+.bottom-item.edit-mode-toggle {
+  width: auto;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  font-size: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--text-muted);
+  transition: color 0.15s;
+}
+.bottom-item.edit-mode-toggle.active { color: var(--accent-gold); }
+.bottom-item.edit-mode-toggle .bottom-icon  { font-size: 1.3rem; }
+.bottom-item.edit-mode-toggle .bottom-label { font-family: var(--font-ui); font-size: 0.6rem; letter-spacing: 0.03em; }
+
+/* ── Edit overlay on character cards ─────────────────────────── */
+.edit-card-overlay {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  width: 26px; height: 26px;
+  background: rgba(14,10,5,0.75);
+  border: 1px solid rgba(200,160,64,0.4);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  color: var(--accent-gold);
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  z-index: 5;
+  backdrop-filter: blur(2px);
+}
+.char-card:hover .edit-card-overlay { opacity: 1; }
+body.edit-mode .edit-card-overlay  { opacity: 0.8; }
+
+/* ── New item card (character grid) ──────────────────────────── */
+.char-card-new {
+  background: transparent;
+  border: 2px dashed rgba(200,160,64,0.25) !important;
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  gap: 0.5rem;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.char-card-new:hover {
+  border-color: rgba(200,160,64,0.5) !important;
+  background: rgba(200,160,64,0.04);
+}
+.char-card-new-icon {
+  font-size: 1.8rem;
+  color: var(--accent-gold-dim);
+  line-height: 1;
+}
+.char-card-new-label {
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* ── New item button on list pages ───────────────────────────── */
+.list-item-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.9rem;
+  background: rgba(200,160,64,0.08);
+  border: 1px solid rgba(200,160,64,0.3);
+  border-radius: var(--radius);
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  color: var(--accent-gold);
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.list-item-new:hover { background: rgba(200,160,64,0.16); }
+
+/* ── Edit button on list items ───────────────────────────────── */
+.list-edit-btn {
+  font-size: 0.78rem;
+  padding: 0.2rem 0.5rem;
+  background: rgba(200,160,64,0.08);
+  border: 1px solid rgba(200,160,64,0.25);
+  border-radius: var(--radius);
+  color: var(--accent-gold-dim);
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+.list-edit-btn:hover { background: rgba(200,160,64,0.18); color: var(--accent-gold); }
+
+/* ══════════════════════════════════════════════════════════════
+   EDIT FORM
+   ══════════════════════════════════════════════════════════════ */
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.edit-form-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgba(200,160,64,0.2);
+  flex-wrap: wrap;
+}
+.edit-form-title {
+  font-family: var(--font-title);
+  font-size: 1.2rem;
+  color: var(--accent-gold);
+  flex: 1;
+  margin: 0;
+}
+.edit-hdr-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+/* ── Main portrait + fields grid ─────────────────────────────── */
+.edit-main-grid {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+@media (max-width: 600px) {
+  .edit-main-grid { grid-template-columns: 1fr; }
+}
+
+.edit-portrait-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.edit-portrait-preview {
+  width: 100%;
+  aspect-ratio: 3/4;
+  background: var(--bg-raised);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.edit-upload-btn {
+  display: block;
+  text-align: center;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-surface);
+  border: 1px dashed rgba(200,160,64,0.3);
+  border-radius: var(--radius);
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.edit-upload-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
+.edit-remove-portrait-btn {
+  background: none;
+  border: none;
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  color: #ef9a9a;
+  cursor: pointer;
+  text-align: center;
+  padding: 0.2rem;
+}
+
+.edit-fields-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* ── Form field ──────────────────────────────────────────────── */
+.edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.edit-label {
+  font-family: var(--font-ui);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+}
+.edit-input,
+.edit-select,
+.edit-textarea {
+  background: var(--bg-surface);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.65rem;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--text-parchment);
+  width: 100%;
+  transition: border-color 0.15s;
+}
+.edit-input:focus,
+.edit-select:focus,
+.edit-textarea:focus {
+  outline: none;
+  border-color: rgba(200,160,64,0.45);
+}
+.edit-select option { background: var(--bg-raised); }
+.edit-textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
+.edit-range { width: 100%; accent-color: var(--accent-gold); margin-top: 0.15rem; }
+.edit-range-labels {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  color: var(--text-muted);
+}
+.edit-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+@media (max-width: 500px) {
+  .edit-row-2 { grid-template-columns: 1fr; }
+}
+
+/* ── Edit section (facts, relationships) ─────────────────────── */
+.edit-section {
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.edit-section-title {
+  font-family: var(--font-title);
+  font-size: 0.78rem;
+  color: var(--accent-gold-dim);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 0.15rem;
+}
+.edit-hint {
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ── Checkboxes (character/location multi-select) ────────────── */
+.edit-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.edit-check {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--bg-surface);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: var(--radius);
+  padding: 0.25rem 0.55rem;
+  font-family: var(--font-ui);
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.edit-check input[type="checkbox"] { accent-color: var(--accent-gold); }
+.edit-check:has(input:checked) { border-color: rgba(200,160,64,0.4); color: var(--accent-gold); }
+
+/* ── Relationship edit chips ─────────────────────────────────── */
+.rel-edit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.rel-edit-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--bg-surface);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.6rem;
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+}
+.rel-edit-dir  { color: var(--accent-gold-dim); flex-shrink: 0; }
+.rel-edit-name { color: var(--text-parchment); font-weight: 500; }
+.rel-edit-type { color: var(--text-muted); font-size: 0.7rem; }
+.rel-edit-label { color: var(--text-muted); font-size: 0.7rem; font-style: italic; }
+.rel-delete-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #ef9a9a;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 0.15rem;
+  opacity: 0.5;
+  transition: opacity 0.12s;
+  flex-shrink: 0;
+}
+.rel-delete-btn:hover { opacity: 1; }
+
+/* ── Add relationship form ───────────────────────────────────── */
+.rel-add-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  background: var(--bg-surface);
+  border: 1px dashed rgba(255,255,255,0.08);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.75rem;
+}
+.edit-select-sm { width: auto; flex: 1; min-width: 90px; font-size: 0.78rem; padding: 0.35rem 0.5rem; }
+.edit-input-sm  { width: auto; flex: 1; min-width: 100px; font-size: 0.78rem; padding: 0.35rem 0.5rem; }
+
+/* ── Action buttons ──────────────────────────────────────────── */
+.edit-hdr-actions,
+.edit-bottom-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.edit-bottom-actions {
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+.edit-save-btn {
+  background: rgba(200,160,64,0.14);
+  border: 1px solid rgba(200,160,64,0.4);
+  color: var(--accent-gold);
+  border-radius: var(--radius);
+  padding: 0.45rem 1.1rem;
+  font-family: var(--font-ui);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.edit-save-btn:hover { background: rgba(200,160,64,0.26); }
+.edit-add-btn {
+  background: rgba(200,160,64,0.08);
+  border: 1px solid rgba(200,160,64,0.3);
+  color: var(--accent-gold);
+  border-radius: var(--radius);
+  padding: 0.35rem 0.75rem;
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.edit-add-btn:hover { background: rgba(200,160,64,0.18); }
+.edit-delete-btn {
+  background: none;
+  border: 1px solid rgba(139,0,0,0.35);
+  color: #ef9a9a;
+  border-radius: var(--radius);
+  padding: 0.45rem 1rem;
+  font-family: var(--font-ui);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.edit-delete-btn:hover { background: rgba(139,0,0,0.2); }
+
+/* ── Edit toast ──────────────────────────────────────────────── */
+.edit-toast {
+  position: fixed;
+  bottom: 5.5rem;
+  left: 50%;
+  transform: translateX(-50%) translateY(16px);
+  background: var(--bg-raised);
+  border: 1px solid rgba(200,160,64,0.3);
+  border-radius: var(--radius);
+  padding: 0.55rem 1.25rem;
+  font-family: var(--font-ui);
+  font-size: 0.82rem;
+  color: var(--text-parchment);
+  z-index: 9999;
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: var(--shadow-card);
+  transition: opacity 0.2s, transform 0.2s;
+}
+.edit-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.edit-toast.ok   { border-color: rgba(46,125,50,0.5);  color: #a5d6a7; }
+.edit-toast.err  { border-color: rgba(139,0,0,0.5);    color: #ef9a9a; }

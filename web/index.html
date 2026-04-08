@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>O Barvách Draků — Kodex</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Lora:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/bundle.css">
+</head>
+<body>
+
+  <!-- ── SVG sketch filters (hidden) ──────────────────────────── -->
+  <svg aria-hidden="true" focusable="false"
+       style="position:absolute;width:0;height:0;overflow:hidden;pointer-events:none">
+    <defs>
+      <!-- Level 0: Neznámý — heavy blur + full grayscale -->
+      <filter id="sketch-0" x="-5%" y="-5%" width="110%" height="110%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.07 0.06" numOctaves="5" seed="2" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="9" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
+        <feGaussianBlur in="displaced" stdDeviation="3" result="blurred"/>
+        <feColorMatrix in="blurred" type="saturate" values="0"/>
+      </filter>
+      <!-- Level 1: Tušený — rough sketch, heavy grayscale -->
+      <filter id="sketch-1" x="-5%" y="-5%" width="110%" height="110%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.055 0.045" numOctaves="5" seed="5" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="6" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
+        <feColorMatrix in="displaced" type="saturate" values="0.12"/>
+      </filter>
+      <!-- Level 2: Základní — moderate sketch, partial color -->
+      <filter id="sketch-2" x="-3%" y="-3%" width="106%" height="106%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.04 0.035" numOctaves="4" seed="3" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="3" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
+        <feColorMatrix in="displaced" type="saturate" values="0.45"/>
+      </filter>
+      <!-- Level 3: Dobře znám — subtle sketch, near full color -->
+      <filter id="sketch-3" x="-2%" y="-2%" width="104%" height="104%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.025 0.02" numOctaves="3" seed="7" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.2" xChannelSelector="R" yChannelSelector="G"/>
+      </filter>
+      <!-- Level 4: Plně zmapován — identity (no effect) -->
+      <filter id="sketch-4">
+        <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0"/>
+      </filter>
+    </defs>
+  </svg>
+
+  <!-- ── SIDEBAR (desktop) ──────────────────────────────────── -->
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-dragon">🐉</div>
+      <div class="logo-text">
+        <span class="logo-title">O Barvách Draků</span>
+        <span class="logo-sub">Kodex Kampaně</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">Mapy</div>
+    <ul class="sidebar-nav">
+      <li><a href="#/mapa/svet"       class="nav-link" data-route="/mapa/svet">
+        <span class="nav-icon">🗺</span> Pobřeží Meče</a></li>
+      <li><a href="#/mapa/palac"      class="nav-link" data-route="/mapa/palac">
+        <span class="nav-icon">☁</span> Myšlenkový Palác</a></li>
+      <li><a href="#/mapa/casova-osa" class="nav-link" data-route="/mapa/casova-osa">
+        <span class="nav-icon">⏳</span> Časová Osa</a></li>
+    </ul>
+
+    <div class="sidebar-section">Wiki</div>
+    <ul class="sidebar-nav">
+      <li><a href="#/postavy"  class="nav-link" data-route="/postavy">
+        <span class="nav-icon">👤</span> Postavy</a></li>
+      <li><a href="#/frakce"   class="nav-link" data-route="/frakce">
+        <span class="nav-icon">⬡</span> Frakce</a></li>
+      <li><a href="#/mista"    class="nav-link" data-route="/mista">
+        <span class="nav-icon">📍</span> Místa</a></li>
+      <li><a href="#/udalosti" class="nav-link" data-route="/udalosti">
+        <span class="nav-icon">📜</span> Události</a></li>
+      <li><a href="#/zahady"   class="nav-link" data-route="/zahady">
+        <span class="nav-icon">❓</span> Záhady</a></li>
+    </ul>
+
+    <div class="sidebar-section">Přehled</div>
+    <ul class="sidebar-nav">
+      <li><a href="#/" class="nav-link" data-route="/">
+        <span class="nav-icon">🏠</span> Přehled</a></li>
+    </ul>
+
+    <!-- Edit mode toggle + export in sidebar footer -->
+    <div class="sidebar-footer">
+      <button class="edit-mode-toggle" onclick="EditMode.toggle()">✏ Úpravy</button>
+      <button class="sidebar-export-btn" id="export-btn" title="Exportovat data jako JS soubor">⬇ Export</button>
+    </div>
+  </nav>
+
+  <!-- ── MAIN CONTENT ──────────────────────────────────────── -->
+  <main class="main-content" id="main-content">
+    <div class="loading-screen" id="loading">
+      <div class="loading-dragon">🐉</div>
+      <div class="loading-text">Načítám kodex…</div>
+    </div>
+  </main>
+
+  <!-- ── BOTTOM NAV (mobile) ───────────────────────────────── -->
+  <nav class="bottom-nav" id="bottom-nav">
+    <a href="#/" class="bottom-item" data-route="/">
+      <span class="bottom-icon">🏠</span>
+      <span class="bottom-label">Přehled</span>
+    </a>
+    <a href="#/mapa/frakce" class="bottom-item" data-route="/mapa/frakce">
+      <span class="bottom-icon">🕸</span>
+      <span class="bottom-label">Mapy</span>
+    </a>
+    <a href="#/postavy" class="bottom-item" data-route="/postavy">
+      <span class="bottom-icon">👤</span>
+      <span class="bottom-label">Postavy</span>
+    </a>
+    <a href="#/zahady" class="bottom-item" data-route="/zahady">
+      <span class="bottom-icon">❓</span>
+      <span class="bottom-label">Záhady</span>
+    </a>
+    <!-- Edit mode toggle (mobile) -->
+    <button class="bottom-item edit-mode-toggle" onclick="EditMode.toggle()">
+      <span class="bottom-icon">✏</span>
+      <span class="bottom-label">Úpravy</span>
+    </button>
+  </nav>
+
+  <!-- ── MAP MODE SHEET (mobile) ───────────────────────────── -->
+  <div class="map-sheet" id="map-sheet" hidden>
+    <div class="map-sheet-inner">
+      <div class="map-sheet-title">Vybrat Mapu</div>
+      <a href="#/mapa/svet"       class="map-sheet-item">🗺 Pobřeží Meče</a>
+      <a href="#/mapa/palac"      class="map-sheet-item">☁ Myšlenkový Palác</a>
+      <a href="#/mapa/casova-osa" class="map-sheet-item">⏳ Časová Osa</a>
+    </div>
+  </div>
+  <div class="map-sheet-backdrop" id="map-backdrop" hidden></div>
+
+  <!-- ── SCRIPTS ───────────────────────────────────────────── -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Modules -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

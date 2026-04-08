@@ -1,0 +1,14 @@
+/* ═══════════════════════════════════════════════════════════════
+   O BARVÁCH DRAKŮ — Centralizovaný CSS balíček
+   Importuje styly v původním požadovaném pořadí sítě,
+   tím padne 7 zbytečných requestů v hlavičce index.html.
+   ═══════════════════════════════════════════════════════════════ */
+
+@import 'main.css';
+@import 'wiki.css';
+@import 'cloudmap.css';
+@import 'admin.css';
+@import 'edit.css';
+@import 'timeline.css';
+@import 'swordcoast.css';
+@import 'factions.css';

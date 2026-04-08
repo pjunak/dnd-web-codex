@@ -1,0 +1,273 @@
+/* ═══════════════════════════════════════════════════════════════
+   MYŠLENKOVÝ PALÁC — Mind map container, toolbar, cloud cards
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Mind Map container ─────────────────────────────────────── */
+.map-container {
+  position: fixed;
+  top: 0;
+  left: var(--sidebar-width);
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
+.map-toolbar {
+  background: var(--bg-surface);
+  border-bottom: 1px solid rgba(200,160,64,0.15);
+  padding: 0.6rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  z-index: 10;
+  flex-shrink: 0;
+}
+.map-title {
+  font-family: var(--font-title);
+  font-size: 0.9rem;
+  color: var(--accent-gold);
+  margin-right: auto;
+}
+.map-mode-btn {
+  background: var(--bg-raised);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--radius);
+  padding: 0.35rem 0.75rem;
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  color: var(--text-light);
+  cursor: pointer;
+  transition: all 0.15s;
+  text-decoration: none;
+}
+.map-mode-btn:hover, .map-mode-btn.active {
+  background: rgba(200,160,64,0.15);
+  border-color: var(--accent-gold);
+  color: var(--accent-gold);
+}
+.map-hint {
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  padding-left: 0.5rem;
+}
+#cy-container {
+  flex: 1;
+  background: var(--bg-deep);
+  background-image: radial-gradient(circle at 50% 50%, rgba(139,32,32,0.04) 0%, transparent 60%);
+}
+.map-tooltip {
+  position: fixed;
+  background: var(--bg-raised);
+  border: 1px solid rgba(200,160,64,0.3);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  color: var(--text-parchment);
+  pointer-events: none;
+  z-index: 200;
+  max-width: 220px;
+  box-shadow: var(--shadow-card);
+  display: none;
+}
+.map-legend {
+  position: absolute;
+  bottom: 1rem;
+  right: 1rem;
+  background: rgba(14,10,5,0.85);
+  border: 1px solid rgba(200,160,64,0.2);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  backdrop-filter: blur(4px);
+}
+.legend-title {
+  color: var(--accent-gold);
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+  color: var(--text-light);
+}
+.legend-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.legend-line {
+  width: 24px; height: 2px;
+  flex-shrink: 0;
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+  .map-container {
+    left: 0;
+    top: 0;
+    bottom: var(--bottom-nav-h);
+  }
+}
+
+/* ── Cloud Map cards ─────────────────────────────────────────── */
+/*    HTML clouds that overlay invisible Cytoscape proxy nodes.   */
+/*    pointer-events:none on the layer; all gestures go to cy.    */
+
+.cm-cloud {
+  /* --cc: faction/type colour set per card via inline style */
+  position: relative;
+  background: linear-gradient(160deg, rgba(22,16,8,0.96) 0%, rgba(14,10,5,0.98) 100%);
+  border: 1px solid color-mix(in srgb, var(--cc) 55%, transparent);
+  border-top: 2px solid var(--cc);
+  border-radius: 6px;
+  padding: 0 10px 8px;
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.6),
+    0 4px 14px rgba(0,0,0,0.55),
+    inset 0 1px 0 rgba(255,255,255,0.04);
+  font-family: var(--font-ui, 'Inter', sans-serif);
+  user-select: none;
+  transition: opacity 0.2s, box-shadow 0.2s;
+  cursor: default;
+}
+
+/* Subtle left glow matching faction colour */
+.cm-cloud::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  box-shadow: inset 2px 0 8px -4px var(--cc);
+  pointer-events: none;
+}
+
+/* Faction strip */
+.cm-strip {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--cc) 80%, #E0D0A0);
+  padding: 5px 0 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.85;
+}
+
+/* Primary name */
+.cm-name {
+  font-family: var(--font-title, 'Cinzel', serif);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-parchment, #F5EDD8);
+  line-height: 1.25;
+  margin-bottom: 4px;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+}
+
+/* Thin separator */
+.cm-divider {
+  height: 1px;
+  background: linear-gradient(90deg, var(--cc), transparent);
+  opacity: 0.35;
+  margin: 0 0 5px;
+}
+
+/* Fact rows */
+.cm-fact {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-light, #C8B89A);
+  margin-bottom: 2px;
+}
+.cm-fact.cm-dim {
+  color: var(--text-muted, #806C52);
+  font-size: 10.5px;
+}
+.cm-fact.cm-hint {
+  font-style: italic;
+  color: color-mix(in srgb, var(--cc) 65%, #C8B89A);
+  font-size: 10.5px;
+}
+
+/* Status row (Vztahy mode) */
+.cm-status-row {
+  font-family: var(--font-ui, 'Inter', sans-serif);
+  font-size: 11px;
+  color: var(--text-light, #C8B89A);
+  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Dead character variant */
+.cm-cloud.cm-dead {
+  filter: grayscale(65%) brightness(0.8);
+  border-top-color: #666;
+  --cc: #666;
+}
+
+/* Mystery node variant */
+.cm-cloud.cm-mystery {
+  background: linear-gradient(160deg, rgba(28,10,42,0.97) 0%, rgba(14,5,22,0.99) 100%);
+}
+
+/* Event node variant */
+.cm-cloud.cm-event {
+  background: linear-gradient(160deg, rgba(28,20,6,0.97) 0%, rgba(14,10,3,0.99) 100%);
+}
+
+/* Highlight states (synced with Cytoscape faded/highlighted classes) */
+.cm-cloud.cm-faded {
+  opacity: 0.07;
+}
+.cm-cloud.cm-highlighted {
+  opacity: 1;
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.6),
+    0 6px 20px rgba(0,0,0,0.7),
+    0 0 12px -3px var(--cc),
+    inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+/* Squish animations — triggered by JS on collision (subtle) */
+@keyframes cm-squish-x {
+  0%   { transform: scaleX(0.93) scaleY(1.04); }
+  55%  { transform: scaleX(1.02) scaleY(0.99); }
+  100% { transform: scaleX(1)    scaleY(1);    }
+}
+@keyframes cm-squish-y {
+  0%   { transform: scaleX(1.04) scaleY(0.93); }
+  55%  { transform: scaleX(0.99) scaleY(1.02); }
+  100% { transform: scaleX(1)    scaleY(1);    }
+}
+.cm-cloud.cm-squish-x {
+  animation: cm-squish-x 0.28s ease-out forwards;
+}
+.cm-cloud.cm-squish-y {
+  animation: cm-squish-y 0.28s ease-out forwards;
+}
+
+/* Edge labels — positioned by cloudmap.js using the true perpendicular vector.
+   Width is set dynamically from edge length so text wraps within the line span. */
+.cm-edge-label {
+  position: absolute;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;       /* wrap within the dynamically-set width */
+  text-align: center;
+  word-break: break-word;
+  pointer-events: none;
+  transform-origin: center center;
+  letter-spacing: 0.02em;
+}

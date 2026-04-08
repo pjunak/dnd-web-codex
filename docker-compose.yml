@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  dnd-codex:
+    build: .
+    container_name: tiamat
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - EDIT_PASSWORD=${EDIT_PASSWORD}
+      - NODE_ENV=production
+    mem_limit: 256m
+    mem_reservation: 128m
+    cpus: 0.5
+    restart: unless-stopped
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

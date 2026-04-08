@@ -1,0 +1,17 @@
+# ── Runtime data (lives on the server, never in git) ──────────
+/data/
+
+# ── Dependencies ───────────────────────────────────────────────
+node_modules/
+
+# ── Secrets ────────────────────────────────────────────────────
+.env
+
+# ── OS / editor noise ──────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+.claude/
+CLAUDE.md
