@@ -1,25 +1,14 @@
-// ═══════════════════════════════════════════════════════════════
-//  SWORD COAST MAP — Interactive geographic map with editable pins
-//  Uses Leaflet.js with a custom CRS.Simple image overlay.
-//  Pin positions stored as fractions (0–1) of image dimensions.
-// ═══════════════════════════════════════════════════════════════
-
 import { Store } from './store.js';
 
-export const SwordCoastMap = (() => {
+export const WorldMap = (() => {
 
-  // ── Map image config ─────────────────────────────────────────
-  // Stored in localStorage as a URL or a data: URI (for local uploads).
-  const LS_IMG_KEY  = 'sc_map_image_url';
-  // Local relative path tried first; falls back to direct CDN URL.
-  const DEFAULT_IMG = 'images/maps/sword_coast.jpg';
-  const FALLBACK_IMG = 'https://static.wikia.nocookie.net/forgottenrealms/images/8/8e/Sword_Coast_map_SCAG.jpg';
+  const LS_IMG_KEY  = 'world_map_image_url';
+  const DEFAULT_IMG = '/maps/swordcoast/sword_coast.jpg';
 
   function _getImgUrl() {
     return localStorage.getItem(LS_IMG_KEY) || DEFAULT_IMG;
   }
 
-  // ── Pin types ────────────────────────────────────────────────
   const PIN_TYPES = {
     major_city: { icon: '🏙', label: 'Velké město',   color: '#D4A017' },
     city:       { icon: '🏛', label: 'Město',          color: '#C0A060' },
@@ -34,44 +23,40 @@ export const SwordCoastMap = (() => {
   };
 
   const PIN_STATUSES = {
-    known:     { label: 'Známé',        ring: '#D4B87A' },
-    visited:   { label: 'Navštívené',   ring: '#4CAF50' },
-    enemy:     { label: 'Nepřátelské',  ring: '#E53935' },
+    known:     { label: 'Známé',         ring: '#D4B87A' },
+    visited:   { label: 'Navštívené',    ring: '#4CAF50' },
+    enemy:     { label: 'Nepřátelské',   ring: '#E53935' },
     fog:       { label: 'Neprozkoumaný', ring: '#555'   },
   };
 
-  // ── State ─────────────────────────────────────────────────────
   let _map       = null;
   let _imgW      = 1;
   let _imgH      = 1;
   let _bounds    = null;
-  let _markers   = {};   // pinId → L.marker
+  let _markers   = {};
   let _addMode   = false;
   let _editPinId = null;
-  let _modeObserver    = null;   // MutationObserver for edit-mode class changes
-  let _resizeObserver  = null;   // ResizeObserver for container size changes
+  let _modeObserver    = null;
+  let _resizeObserver  = null;
   let _eventPathsVisible = false;
-  let _eventMarkers    = [];     // L.marker for event locations
-  let _eventPolylines  = [];     // L.polyline for event paths
+  let _eventMarkers    = [];
+  let _eventPolylines  = [];
 
-  // ── Coord helpers ────────────────────────────────────────────
-  // Leaflet CRS.Simple: latlng = [-y_px, x_px]  (y flipped so north is up)
   function _toLL(fx, fy)  { return L.latLng(-fy * _imgH, fx * _imgW); }
   function _toFrac(ll)    { return { x: ll.lng / _imgW, y: -ll.lat / _imgH }; }
 
-  // ── Build UI ─────────────────────────────────────────────────
   function render() {
     document.getElementById('main-content').innerHTML = `
       <div class="sc-shell">
         <div class="sc-toolbar">
-          <div class="sc-title">🗺 Pobřeží Meče</div>
-          <button class="sc-btn ${_addMode ? 'active' : ''}" id="sc-add-btn" onclick="SwordCoastMap.toggleAddMode()">
+          <div class="sc-title">🗺 Mapa světa</div>
+          <button class="sc-btn ${_addMode ? 'active' : ''}" id="sc-add-btn" onclick="WorldMap.toggleAddMode()">
             ${_addMode ? '✕ Zrušit' : '+ Přidat místo'}
           </button>
-          <button class="sc-btn ${_eventPathsVisible ? 'active' : ''}" id="sc-event-btn" onclick="SwordCoastMap.toggleEventPaths()" title="Zobraz polohy a trasy událostí z Časové Osy">
+          <button class="sc-btn ${_eventPathsVisible ? 'active' : ''}" id="sc-event-btn" onclick="WorldMap.toggleEventPaths()" title="Zobraz polohy a trasy událostí z Časové Osy">
             📜 Trasy událostí
           </button>
-          <button class="sc-btn" onclick="SwordCoastMap.showSettings()">⚙ Mapa</button>
+          <button class="sc-btn" onclick="WorldMap.showSettings()">⚙ Mapa</button>
           <span class="sc-hint">${_addMode
             ? 'Klikni na mapu pro přidání nového místa'
             : 'Klik = detail místa · Kolečko = zoom · Táhni = pohyb'
@@ -83,7 +68,7 @@ export const SwordCoastMap = (() => {
 
       <!-- Pin detail / edit panel -->
       <div class="sc-panel" id="sc-panel" hidden>
-        <button class="sc-panel-close" onclick="SwordCoastMap.closePanel()">✕</button>
+        <button class="sc-panel-close" onclick="WorldMap.closePanel()">✕</button>
         <div id="sc-panel-content"></div>
       </div>
 
@@ -93,18 +78,19 @@ export const SwordCoastMap = (() => {
           <div class="sc-dialog-title">⚙ Nastavení mapy</div>
           <p class="sc-dialog-hint">
             <strong>Možnost 1 – nahrát obrázek:</strong> Vyber soubor ze svého počítače (doporučeno).<br>
-            <strong>Možnost 2 – URL:</strong> Vlož přímý odkaz na obrázek mapy.
+            <strong>Možnost 2 – URL:</strong> Vlož přímý odkaz na obrázek mapy.<br>
+            <strong>Možnost 3 – server:</strong> Ulož obrázek jako <code>data/maps/swordcoast/sword_coast.jpg</code> na serveru.
           </p>
           <label class="sc-label">Nahrát ze souboru</label>
           <label class="sc-btn" style="cursor:pointer;display:inline-block;margin-bottom:0.8rem">
             📂 Vybrat soubor…
-            <input type="file" accept="image/*" style="display:none" onchange="SwordCoastMap.handleMapFileUpload(this)">
+            <input type="file" accept="image/*" style="display:none" onchange="WorldMap.handleMapFileUpload(this)">
           </label>
           <label class="sc-label">— nebo zadat URL obrázku —</label>
           <input class="sc-input" id="sc-img-url" type="text" value="${_esc(_getImgUrl().startsWith('data:') ? '' : _getImgUrl())}">
           <div class="sc-dialog-actions">
-            <button class="sc-btn ok" onclick="SwordCoastMap.applySettings()">✓ Použít URL</button>
-            <button class="sc-btn" onclick="SwordCoastMap.closeSettings()">Zrušit</button>
+            <button class="sc-btn ok" onclick="WorldMap.applySettings()">✓ Použít URL</button>
+            <button class="sc-btn" onclick="WorldMap.closeSettings()">Zrušit</button>
           </div>
         </div>
       </div>
@@ -114,7 +100,6 @@ export const SwordCoastMap = (() => {
     _renderLegend();
   }
 
-  // ── Leaflet init ─────────────────────────────────────────────
   function _initLeaflet() {
     _clearEventPaths();
     if (_modeObserver)   { _modeObserver.disconnect();   _modeObserver   = null; }
@@ -124,29 +109,15 @@ export const SwordCoastMap = (() => {
     const imgUrl    = _getImgUrl();
     const container = document.getElementById('sc-map-container');
 
-    // Probe image dimensions before creating the map
     const img = new Image();
     img.onload  = () => _doInit(img, imgUrl, container);
-    img.onerror = () => {
-      // Local path failed — try the remote CDN fallback once
-      if (imgUrl === DEFAULT_IMG) {
-        const fbImg = new Image();
-        fbImg.onload  = () => _doInit(fbImg, FALLBACK_IMG, container);
-        fbImg.onerror = () => _showMapError(container);
-        fbImg.src = FALLBACK_IMG;
-      } else {
-        _showMapError(container);
-      }
-    };
+    img.onerror = () => _showMapError(container);
     img.src = imgUrl;
   }
 
-  // ── Min-zoom helpers ─────────────────────────────────────────
-  // Returns the zoom level at which the image exactly fills the container
-  // in both axes (i.e. neither axis can scroll when at this zoom).
   function _fitZoom() {
     if (!_map || !_bounds) return -3;
-    return _map.getBoundsZoom(_bounds, false); // false = don't pad
+    return _map.getBoundsZoom(_bounds, false);
   }
 
   function _enforceFitZoom() {
@@ -165,7 +136,7 @@ export const SwordCoastMap = (() => {
 
     _map = L.map(container, {
       crs:                 L.CRS.Simple,
-      minZoom:             -8,     // will be tightened after fitBounds
+      minZoom:             -8,
       maxZoom:             2,
       zoomSnap:            0.25,
       zoomDelta:           0.5,
@@ -176,7 +147,6 @@ export const SwordCoastMap = (() => {
     L.imageOverlay(imgUrl, _bounds).addTo(_map);
     _map.fitBounds(_bounds);
 
-    // After the first render tick the container has its final size — lock minZoom
     requestAnimationFrame(() => _enforceFitZoom());
 
     _markers = {};
@@ -189,7 +159,6 @@ export const SwordCoastMap = (() => {
       _setAddMode(false);
     });
 
-    // Watch body.edit-mode class and update pin draggability accordingly
     _modeObserver = new MutationObserver(() => {
       const editable = document.body.classList.contains('edit-mode');
       Object.values(_markers).forEach(m => {
@@ -198,7 +167,6 @@ export const SwordCoastMap = (() => {
     });
     _modeObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
-    // Re-enforce fit zoom when the container is resized (e.g. window resize, sidebar toggle)
     if (_resizeObserver) _resizeObserver.disconnect();
     _resizeObserver = new ResizeObserver(() => {
       if (!_map) return;
@@ -214,15 +182,13 @@ export const SwordCoastMap = (() => {
         <div style="font-size:2rem;margin-bottom:1rem">🗺</div>
         <div style="font-size:1.1rem;margin-bottom:0.5rem"><strong>Mapa se nenačetla</strong></div>
         <div style="font-size:0.88rem;line-height:1.6;max-width:420px">
-          Nahraj obrázek mapy přes <strong>⚙ Mapa → Vybrat soubor</strong>.<br><br>
-          Doporučená mapa: <em>Sword Coast Adventurer's Guide</em> (Mike Schley / WotC).<br>
-          Stáhni ji z webu a vyber soubor v nastavení — uloží se přímo do prohlížeče.
+          Nahraj obrázek mapy přes <strong>⚙ Mapa → Vybrat soubor</strong>, nebo ho ulož na server jako
+          <code>data/maps/swordcoast/sword_coast.jpg</code>.
         </div>
-        <button class="sc-btn" style="margin-top:1.2rem" onclick="SwordCoastMap.showSettings()">⚙ Otevřít nastavení</button>
+        <button class="sc-btn" style="margin-top:1.2rem" onclick="WorldMap.showSettings()">⚙ Otevřít nastavení</button>
       </div>`;
   }
 
-  // ── Pin marker ───────────────────────────────────────────────
   function _pinIcon(pin) {
     const pt   = PIN_TYPES[pin.type]  || PIN_TYPES.custom;
     const ps   = PIN_STATUSES[pin.status] || PIN_STATUSES.known;
@@ -243,8 +209,6 @@ export const SwordCoastMap = (() => {
   function _placePin(pin) {
     if (!_map) return;
     const ll = _toLL(pin.x, pin.y);
-    // Always create with draggable:true so m.dragging is initialised,
-    // then immediately lock it unless edit mode is already active.
     const m  = L.marker(ll, {
       icon:      _pinIcon(pin),
       draggable: true,
@@ -256,7 +220,7 @@ export const SwordCoastMap = (() => {
     m.on('dragend', () => {
       const frac    = _toFrac(m.getLatLng());
       const current = Store.getMapPins().find(p => p.id === pin.id);
-      if (!current) return;   // pin was deleted while being dragged
+      if (!current) return;
       Store.saveMapPin({ ...current, x: frac.x, y: frac.y });
     });
 
@@ -270,7 +234,6 @@ export const SwordCoastMap = (() => {
     _placePin(pin);
   }
 
-  // ── Pin panel: view ──────────────────────────────────────────
   function _openPinPanel(pinId) {
     const pin = Store.getMapPins().find(p => p.id === pinId);
     if (!pin) return;
@@ -290,18 +253,17 @@ export const SwordCoastMap = (() => {
         </div>
         ${pin.notes ? `<div class="sc-pin-notes">${_esc(pin.notes)}</div>` : ''}
         ${loc ? `<div class="sc-pin-link">
-          📍 <a href="#/misto/${loc.id}" onclick="SwordCoastMap.closePanel()">Otevřít stránku místa</a>
+          📍 <a href="#/misto/${loc.id}" onclick="WorldMap.closePanel()">Otevřít stránku místa</a>
         </div>` : ''}
         <div class="sc-pin-actions">
-          <button class="sc-btn ok" onclick="SwordCoastMap.openEditPin('${pinId}')">✏ Upravit</button>
-          <button class="sc-btn err" onclick="SwordCoastMap.deletePin('${pinId}')">🗑 Smazat</button>
+          <button class="sc-btn ok" onclick="WorldMap.openEditPin('${pinId}')">✏ Upravit</button>
+          <button class="sc-btn err" onclick="WorldMap.deletePin('${pinId}')">🗑 Smazat</button>
         </div>
       </div>
     `;
     document.getElementById('sc-panel').removeAttribute('hidden');
   }
 
-  // ── Pin panel: edit / new ────────────────────────────────────
   function openEditPin(pinId) {
     const pin = Store.getMapPins().find(p => p.id === pinId) || {};
     _renderPinForm(pin, false);
@@ -337,8 +299,8 @@ export const SwordCoastMap = (() => {
         <label class="sc-label">Propojit s kampaňovým místem</label>
         <select class="sc-input" id="spf-location">${locOpts}</select>
         <div class="sc-pin-actions">
-          <button class="sc-btn ok" onclick="SwordCoastMap.savePin(${isNew}, ${pin.x||0}, ${pin.y||0})">💾 Uložit</button>
-          ${!isNew ? `<button class="sc-btn" onclick="SwordCoastMap.openPinPanel('${pin.id}')">Zpět</button>` : ''}
+          <button class="sc-btn ok" onclick="WorldMap.savePin(${isNew}, ${pin.x||0}, ${pin.y||0})">💾 Uložit</button>
+          ${!isNew ? `<button class="sc-btn" onclick="WorldMap.openPinPanel('${pin.id}')">Zpět</button>` : ''}
         </div>
       </div>
     `;
@@ -375,9 +337,6 @@ export const SwordCoastMap = (() => {
     closePanel();
   }
 
-  // ── Event paths ───────────────────────────────────────────────
-  // Places markers + polylines on the map for each event's primary location,
-  // drawing a path between consecutive events when the location changes.
   function _drawEventPaths() {
     _clearEventPaths();
     if (!_map) return;
@@ -391,7 +350,6 @@ export const SwordCoastMap = (() => {
 
     const pins = Store.getMapPins();
 
-    // Resolve primary location pin for each event
     const eventPoints = events.map(e => {
       const primaryLocId = (e.locations || [])[0];
       if (!primaryLocId) return null;
@@ -402,11 +360,10 @@ export const SwordCoastMap = (() => {
 
     if (!eventPoints.length) return;
 
-    // Draw polylines between consecutive event locations
     for (let i = 1; i < eventPoints.length; i++) {
       const prev = eventPoints[i - 1];
       const curr = eventPoints[i];
-      if (prev.pin.id === curr.pin.id) continue; // same location — no line
+      if (prev.pin.id === curr.pin.id) continue;
       const line = L.polyline([prev.ll, curr.ll], {
         color:      '#C8A040',
         weight:     2.5,
@@ -416,7 +373,6 @@ export const SwordCoastMap = (() => {
       _eventPolylines.push(line);
     }
 
-    // Place event markers (drawn on top of lines)
     eventPoints.forEach(({ event: e, ll }) => {
       const sittingLabel = e.sitting ? `S${e.sitting}` : '✦';
       const bgColor      = e.sitting ? '#8B6914' : '#5A3A5A';
@@ -452,7 +408,6 @@ export const SwordCoastMap = (() => {
     _renderLegend();
   }
 
-  // ── Add-mode toggle ──────────────────────────────────────────
   function _setAddMode(on) {
     _addMode = on;
     const btn = document.getElementById('sc-add-btn');
@@ -467,7 +422,6 @@ export const SwordCoastMap = (() => {
 
   function toggleAddMode() { _setAddMode(!_addMode); }
 
-  // ── Panel / settings ──────────────────────────────────────────
   function closePanel() {
     document.getElementById('sc-panel')?.setAttribute('hidden', '');
     _editPinId = null;
@@ -487,7 +441,7 @@ export const SwordCoastMap = (() => {
     const reader = new FileReader();
     reader.onload = e => {
       try { localStorage.setItem(LS_IMG_KEY, e.target.result); } catch (err) {
-        alert('Soubor je příliš velký pro uložení v prohlížeči. Zkus menší obrázek nebo ho ulož jako web/images/sword_coast.jpg.');
+        alert('Soubor je příliš velký pro uložení v prohlížeči. Zkus menší obrázek nebo ho ulož na server jako data/maps/swordcoast/sword_coast.jpg.');
         return;
       }
       closeSettings();
@@ -505,7 +459,6 @@ export const SwordCoastMap = (() => {
     }
   }
 
-  // ── Legend ────────────────────────────────────────────────────
   function _renderLegend() {
     const leg = document.getElementById('sc-legend');
     if (!leg) return;
@@ -531,7 +484,6 @@ export const SwordCoastMap = (() => {
     `;
   }
 
-  // ── Util ──────────────────────────────────────────────────────
   function _esc(s) {
     return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }

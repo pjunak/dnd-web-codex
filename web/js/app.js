@@ -7,7 +7,7 @@ import { EditMode } from './editmode.js';
 import { Wiki } from './wiki.js';
 import { CloudMap } from './cloudmap.js';
 import { Timeline } from './timeline.js';
-import { SwordCoastMap } from './swordcoast.js';
+import { WorldMap } from './map.js';
 import { Admin } from './admin.js';
 
 // Expose modules to global scope for inline event handlers (onclick="...")
@@ -16,7 +16,7 @@ window.EditMode = EditMode;
 window.Wiki = Wiki;
 window.CloudMap = CloudMap;
 window.Timeline = Timeline;
-window.SwordCoastMap = SwordCoastMap;
+window.WorldMap = WorldMap;
 window.Admin = Admin;
 
 (function () {
@@ -59,7 +59,7 @@ window.Admin = Admin;
     // Maps — full-screen layout
     if (section === "mapa") {
       if (sub === "svet") {
-        SwordCoastMap.render();
+        WorldMap.render();
       } else if (sub === "casova-osa") {
         Timeline.render();
       } else if (sub === "palac" || sub === "frakce" || sub === "vztahy" || sub === "tajemstvi") {
