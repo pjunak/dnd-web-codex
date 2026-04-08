@@ -26,6 +26,7 @@ const requireAuth = (req, res, next) => {
 };
 
 app.use('/portraits', express.static(PORTRAITS_DIR));
+app.use('/maps',      express.static(path.join(DATA_DIR, 'maps')));
 app.use(express.static(WEB_DIR));
 
 function _imageFilter(_req, file, cb) {
