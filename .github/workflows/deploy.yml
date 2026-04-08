@@ -15,6 +15,6 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd /opt/dnd-codex
+            cd /opt/tiamat
             git pull
             docker compose up -d --build
