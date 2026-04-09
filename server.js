@@ -1,5 +1,6 @@
 const express      = require('express');
 const multer       = require('multer');
+const archiver     = require('archiver');
 const fs           = require('fs');
 const path         = require('path');
 const crypto       = require('crypto');
@@ -211,6 +212,24 @@ app.delete('/api/portrait/:identifier', requireAuth, (req, res) => {
     console.error('DELETE /api/portrait:', e);
     res.status(500).json({ error: 'Delete error' });
   }
+});
+
+// ── Full data/ backup as zip ──────────────────────────────────
+app.get('/api/backup', requireAuth, (_req, res) => {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const filename  = `backup-${timestamp}.zip`;
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+  const archive = archiver('zip', { zlib: { level: 9 } });
+  archive.on('error', err => {
+    console.error('Backup archive error:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Backup failed' });
+  });
+  archive.pipe(res);
+  archive.directory(DATA_DIR, 'data');
+  archive.finalize();
 });
 
 app.get('*', (_req, res) => {

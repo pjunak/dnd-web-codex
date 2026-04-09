@@ -169,19 +169,8 @@ window.Admin = Admin;
     const loading = document.getElementById("loading");
     if (loading) loading.remove();
 
-    // Wire up export button (in sidebar footer)
-    const exportBtn = document.getElementById("export-btn");
-    if (exportBtn) {
-      exportBtn.addEventListener("click", () => {
-        const content = Store.exportJS();
-        const blob = new Blob([content], { type: "text/javascript" });
-        const url  = URL.createObjectURL(blob);
-        const a    = document.createElement("a");
-        a.href = url; a.download = "data-export.js";
-        a.click();
-        URL.revokeObjectURL(url);
-      });
-    }
+    // Backup button is a plain <a href="/api/backup"> — no JS wiring needed.
+    // It's only visible in edit mode (CSS .edit-only-btn).
 
     // Mobile map sheet
     const mapItems = document.querySelectorAll('.bottom-item[data-route="/mapa/frakce"]');

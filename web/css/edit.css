@@ -58,7 +58,11 @@ body.edit-mode::after {
   transition: border-color 0.15s, color 0.15s;
   text-align: left;
 }
-.sidebar-export-btn:hover { border-color: rgba(200,160,64,0.3); color: var(--text-light); }
+.sidebar-export-btn:hover { border-color: rgba(200,160,64,0.3); color: var(--text-light); text-decoration: none; }
+
+/* Buttons only visible when edit mode is active */
+.edit-only-btn { display: none; }
+.edit-mode .edit-only-btn { display: block; }
 
 /* ── Bottom nav edit toggle ──────────────────────────────────── */
 .bottom-item.edit-mode-toggle {
