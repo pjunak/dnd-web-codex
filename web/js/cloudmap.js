@@ -104,6 +104,59 @@ export const CloudMap = (() => {
     return _base() + rows * H_FACT + H_OVERHEAD;
   }
 
+  // ── Faction hub / location cloud sizes ───────────────────────
+  const CW_HUB = 210;
+  const IW_HUB = CW_HUB - PAD * 2;
+
+  function _factionHubCloudH(faction, count) {
+    // strip + name + divider + 1 fact row (member count) + overhead
+    let rows = 1;
+    if (faction.description) rows += Math.min(2, _wrap(faction.description, FONT_FACT, IW_HUB).length);
+    return _base() + rows * H_FACT + H_OVERHEAD;
+  }
+
+  function _factionHubCloudHTML(fId, faction, count) {
+    let body = `<div class="cm-fact">${count} ${count === 1 ? 'postava' : count < 5 ? 'postavy' : 'postav'}</div>`;
+    return `<div class="cm-cloud cm-faction-hub" data-id="hub_${fId}" data-type="faction"
+              style="--cc:${faction.color}; width:${CW_HUB}px">
+      <div class="cm-strip">${_esc(faction.badge)} FRAKCE</div>
+      <div class="cm-name">${_esc(faction.name)}</div>
+      <div class="cm-divider"></div>
+      ${body}
+    </div>`;
+  }
+
+  function _locationCloudH(loc) {
+    // strip + name + divider + optional status row + overhead
+    const rows = loc.status ? 1 : 0;
+    return _base() + rows * H_FACT + H_OVERHEAD;
+  }
+
+  function _locationCloudHTML(loc) {
+    const status = loc.status || '';
+    const fact = status ? _esc(status) : '';
+    return `<div class="cm-cloud cm-location" data-id="${loc.id}" data-type="location"
+              style="--cc:#5D7A3A; width:${CW}px">
+      <div class="cm-strip">📍 Místo</div>
+      <div class="cm-name">${_esc(loc.name)}</div>
+      <div class="cm-divider"></div>
+      ${fact ? `<div class="cm-fact cm-dim">${fact}</div>` : ''}
+    </div>`;
+  }
+
+  /** Scan characters → Map<factionId, Set<locationId>> */
+  function _deriveFactionLocations(chars) {
+    const map = new Map();
+    for (const c of chars) {
+      if (!c.faction) continue;
+      if (!map.has(c.faction)) map.set(c.faction, new Set());
+      const s = map.get(c.faction);
+      if (c.location) s.add(c.location);
+      if (c.locationRoles) c.locationRoles.forEach(lr => { if (lr.locationId) s.add(lr.locationId); });
+    }
+    return map;
+  }
+
   // ── Data helpers ────────────────────────────────────────────
   function _factionColor(id) { return Store.getFactions()[id]?.color  || '#444'; }
   function _factionBadge(id) { return Store.getFactions()[id]?.badge  || '';    }
@@ -236,6 +289,7 @@ export const CloudMap = (() => {
     commands:    '#8B0000', ally:        '#2E7D32', enemy:       '#C62828',
     mission:     '#E65100', mystery:     '#6A1B9A', captured_by: '#0D47A1',
     history:     '#555555', uncertain:   '#757575', negotiates:  '#1565C0',
+    located_at:  '#5D7A3A',
   };
   const EDGE_STYLES = {
     commands:    { 'line-style': 'solid',  width: 3 },
@@ -247,6 +301,8 @@ export const CloudMap = (() => {
     history:     { 'line-style': 'dashed', width: 1 },
     uncertain:   { 'line-style': 'dashed', width: 1 },
     negotiates:  { 'line-style': 'dashed', width: 2 },
+    member:      { 'line-style': 'dashed', width: 1.5 },
+    located_at:  { 'line-style': 'dotted', width: 2 },
   };
 
   function _relEdge(r) {
@@ -290,6 +346,79 @@ export const CloudMap = (() => {
     if (_currentMode) localStorage.removeItem(_savePosKey());
   }
 
+  // ── Faction filter state ─────────────────────────────────────
+  let _hiddenFactions = new Set();
+
+  function _toggleFaction(fId) {
+    if (_hiddenFactions.has(fId)) _hiddenFactions.delete(fId);
+    else _hiddenFactions.add(fId);
+    _applyFactionFilter();
+    // Update chip UI
+    document.querySelectorAll('.faction-chip[data-faction]').forEach(btn => {
+      const f = btn.dataset.faction;
+      if (f === 'all') {
+        btn.classList.toggle('dimmed', _hiddenFactions.size > 0);
+      } else {
+        btn.classList.toggle('dimmed', _hiddenFactions.has(f));
+      }
+    });
+  }
+
+  function _showAllFactions() {
+    _hiddenFactions.clear();
+    _applyFactionFilter();
+    document.querySelectorAll('.faction-chip').forEach(btn => btn.classList.remove('dimmed'));
+  }
+
+  function _applyFactionFilter() {
+    if (!_cy) return;
+    // Determine which location nodes should be hidden:
+    // hide a location only if ALL factions connecting to it are hidden
+    const locVisibleFactions = {}; // locId → Set<factionId> of visible factions
+    _cy.edges().forEach(edge => {
+      const src = edge.source();
+      const tgt = edge.target();
+      if (src.data('type') === 'faction' && tgt.data('type') === 'location') {
+        const fId = src.data('faction');
+        const lId = tgt.id();
+        if (!locVisibleFactions[lId]) locVisibleFactions[lId] = new Set();
+        if (!_hiddenFactions.has(fId)) locVisibleFactions[lId].add(fId);
+      }
+    });
+
+    _cy.nodes().forEach(node => {
+      const type    = node.data('type');
+      const faction = node.data('faction');
+      const id      = node.id();
+      let hidden = false;
+
+      if (type === 'faction' || type === 'character') {
+        hidden = faction && _hiddenFactions.has(faction);
+      } else if (type === 'location') {
+        // Hidden if no visible faction connects to it
+        const vis = locVisibleFactions[id];
+        hidden = !vis || vis.size === 0;
+      }
+
+      const wrapper = _cloudMap[id];
+      if (wrapper) wrapper.style.display = hidden ? 'none' : '';
+      // Also set Cytoscape node visibility for edge routing
+      if (hidden) node.addClass('cm-filter-hidden');
+      else        node.removeClass('cm-filter-hidden');
+    });
+
+    // Hide edges where either endpoint is hidden
+    _cy.edges().forEach(edge => {
+      const hidden = edge.source().hasClass('cm-filter-hidden') ||
+                     edge.target().hasClass('cm-filter-hidden');
+      if (hidden) edge.addClass('cm-filter-hidden');
+      else        edge.removeClass('cm-filter-hidden');
+      // Also hide edge labels
+      const elObj = _edgeLabels[edge.id()];
+      if (elObj) elObj.div.style.display = hidden ? 'none' : '';
+    });
+  }
+
   // ── Cytoscape state ─────────────────────────────────────────
   let _cy          = null;
   let _cloudLayer  = null;
@@ -329,7 +458,8 @@ export const CloudMap = (() => {
           <a href="#/mapa/vztahy"    class="map-mode-btn ${mode==='vztahy'    ?'active':''}">Vztahy</a>
           <a href="#/mapa/tajemstvi" class="map-mode-btn ${mode==='tajemstvi' ?'active':''}">Záhady</a>
           <button class="map-mode-btn" onclick="CloudMap.resetLayout()" title="Vymaže uložené pozice a znovu rozloží uzly automaticky">⟳ Rozložení</button>
-          <span class="map-hint">Klik = detail · Táhni = pohyb · Scroll = zoom · Pozice se ukládají</span>
+          <button class="map-mode-btn cm-save-pos" onclick="CloudMap.savePositions()" title="Uloží aktuální pozice uzlů">💾 Uložit pozice</button>
+          <span class="map-hint">Klik = detail · Táhni = pohyb · Scroll = zoom</span>
         </div>
         <div id="cy-container"></div>
         <div class="map-legend" id="map-legend"></div>
@@ -403,6 +533,7 @@ export const CloudMap = (() => {
         },
         { selector: '.faded',       style: { opacity: 0.07 } },
         { selector: '.highlighted', style: { opacity: 1    } },
+        { selector: '.cm-filter-hidden', style: { opacity: 0, 'events': 'no' } },
       ],
       layout,
       minZoom: 0.18,
@@ -684,6 +815,8 @@ export const CloudMap = (() => {
       if (d.type === 'character') window.location.hash = `#/postava/${d.id}`;
       if (d.type === 'mystery')   window.location.hash = `#/zahada/${d.id}`;
       if (d.type === 'event')     window.location.hash = `#/udalost/${d.id}`;
+      if (d.type === 'faction')   window.location.hash = `#/frakce/${d.id.replace('hub_', '')}`;
+      if (d.type === 'location')  window.location.hash = `#/misto/${d.id}`;
     }, 120);
   }
 
@@ -718,7 +851,7 @@ export const CloudMap = (() => {
       delete _vel[id];
     });
     _cy.on('drag',    'node',  _bounce);
-    _cy.on('dragfree','node',  evt => { _onDragFree(evt); _savePositions(); });
+    _cy.on('dragfree','node',  evt => { _onDragFree(evt); });
     _cy.on('tap',              _onTap);
 
     // ── Smooth zoom — override Cytoscape's coarse wheel zoom ──────
@@ -754,36 +887,129 @@ export const CloudMap = (() => {
       requestAnimationFrame(() => {
         _resizeToActual();
         _sync();
-        // Save positions after physics layout finishes (so next load uses them)
-        _cy.one('layoutstop', () => _savePositions());
+        // Positions are saved manually via the "Uložit pozice" button in edit mode
       });
     });
   }
 
   // ── MODE: FRAKCE ────────────────────────────────────────────
-  // Clouds show: faction strip, name, title, command chain.
-  // Edges: commands + negotiates only.
+  // Central faction hub nodes + member nodes + location nodes.
+  // Edges: hub→member, hub→location, commands, negotiates.
   function _renderFrakce() {
     _buildUI('frakce');
-    const chars = Store.getCharacters();
-    const rels  = Store.getRelationships()
-      .filter(r => r.type === 'commands' || r.type === 'negotiates');
 
-    const nodes = chars.map(c =>
-      _proxy(c.id, 'character', CW, _charCloudH(c, 'frakce'))
+    // Clear stale positions from before hub/location nodes were added
+    const POS_VERSION_KEY = 'cm_pos_v_frakce';
+    if (localStorage.getItem(POS_VERSION_KEY) !== '2') {
+      localStorage.removeItem('cm_pos_frakce');
+      localStorage.setItem(POS_VERSION_KEY, '2');
+    }
+
+    const chars    = Store.getCharacters();
+    const factions = Store.getFactions();
+    const allRels  = Store.getRelationships();
+    const locations = Store.getLocations();
+    const facLocMap = _deriveFactionLocations(chars);
+
+    // — Count members per faction —
+    const memberCounts = {};
+    chars.forEach(c => { memberCounts[c.faction] = (memberCounts[c.faction] || 0) + 1; });
+
+    // — Faction hub nodes —
+    const hubNodes = Object.entries(factions).map(([fId, f]) =>
+      _proxy('hub_' + fId, 'faction', CW_HUB, _factionHubCloudH(f, memberCounts[fId] || 0),
+        { faction: fId })
     );
-    const edges = rels.map(_relEdge);
 
-    _initCy([...nodes, ...edges], {
-      name: 'cose', animate: true, animationDuration: 700,
-      nodeRepulsion: 18000, gravity: 0.18, idealEdgeLength: 200,
-      padding: 70, randomize: false, numIter: 2500,
+    // — Character nodes —
+    const charNodes = chars.map(c =>
+      _proxy(c.id, 'character', CW, _charCloudH(c, 'frakce'), { faction: c.faction })
+    );
+
+    // — Location nodes (deduplicated) —
+    const usedLocIds = new Set();
+    facLocMap.forEach(locSet => locSet.forEach(id => usedLocIds.add(id)));
+    const locNodes = [];
+    for (const locId of usedLocIds) {
+      const loc = locations.find(l => l.id === locId);
+      if (loc) locNodes.push(_proxy(loc.id, 'location', CW, _locationCloudH(loc), {}));
+    }
+
+    // — Edges —
+    const edges = [];
+
+    // Hub → member edges (dashed, faction color)
+    chars.forEach(c => {
+      if (!c.faction || !factions[c.faction]) return;
+      const fColor = _factionColor(c.faction);
+      edges.push({
+        data: {
+          id: `mbr_${c.faction}_${c.id}`, source: 'hub_' + c.faction, target: c.id,
+          label: '', color: fColor, width: 1.5, lineStyle: 'dashed',
+        }
+      });
     });
 
+    // Hub → location edges (dotted, earthy green)
+    facLocMap.forEach((locSet, fId) => {
+      for (const locId of locSet) {
+        if (!locations.find(l => l.id === locId)) continue;
+        edges.push({
+          data: {
+            id: `loc_${fId}_${locId}`, source: 'hub_' + fId, target: locId,
+            label: '', color: '#5D7A3A', width: 2, lineStyle: 'dotted',
+          }
+        });
+      }
+    });
+
+    // Commands + negotiates between characters
+    const relEdges = allRels
+      .filter(r => r.type === 'commands' || r.type === 'negotiates')
+      .map(_relEdge);
+    edges.push(...relEdges);
+
+    // — Layout —
+    _initCy([...hubNodes, ...charNodes, ...locNodes, ...edges], {
+      name: 'cose', animate: true, animationDuration: 700,
+      nodeRepulsion: 24000, gravity: 0.12, idealEdgeLength: 200,
+      padding: 90, randomize: false, numIter: 3000,
+    });
+
+    // — Add cloud cards —
+    Object.entries(factions).forEach(([fId, f]) =>
+      _addCloud(_factionHubCloudHTML(fId, f, memberCounts[fId] || 0), 'hub_' + fId)
+    );
     chars.forEach(c => _addCloud(_charCloudHTML(c, 'frakce'), c.id));
+    for (const locId of usedLocIds) {
+      const loc = locations.find(l => l.id === locId);
+      if (loc) _addCloud(_locationCloudHTML(loc), loc.id);
+    }
+
     _bind();
 
-    const factions = Store.getFactions();
+    // — Filter chips —
+    const filterContainer = document.createElement('div');
+    filterContainer.className = 'faction-filter-chips';
+    filterContainer.id = 'faction-filter';
+    filterContainer.innerHTML =
+      `<button class="faction-chip" data-faction="all" onclick="CloudMap.showAllFactions()">Vše</button>` +
+      Object.entries(factions).map(([fId, f]) =>
+        `<button class="faction-chip" data-faction="${fId}" style="--fc:${f.color}" onclick="CloudMap.toggleFaction('${fId}')">${f.badge} ${_esc(f.name)}</button>`
+      ).join('');
+    const toolbar = document.querySelector('.map-toolbar');
+    const hint = toolbar.querySelector('.map-hint');
+    toolbar.insertBefore(filterContainer, hint);
+
+    // Restore filter state from previous render
+    if (_hiddenFactions.size) _applyFactionFilter();
+    document.querySelectorAll('.faction-chip[data-faction]').forEach(btn => {
+      const f = btn.dataset.faction;
+      if (f === 'all') btn.classList.toggle('dimmed', _hiddenFactions.size > 0);
+      else btn.classList.toggle('dimmed', _hiddenFactions.has(f));
+    });
+
+    // — Legend —
     const leg = document.getElementById('map-legend');
     if (leg) leg.innerHTML = `
       <div class="legend-title">Frakce</div>
@@ -792,9 +1018,20 @@ export const CloudMap = (() => {
           <div class="legend-dot" style="background:${f.color}"></div>
           ${f.badge} ${f.name}
         </div>`).join('')}
+      <div class="legend-item">
+        <div class="legend-dot" style="background:#5D7A3A"></div>
+        📍 Místo
+      </div>
       <div class="legend-item" style="margin-top:0.4rem;opacity:0.55">
         <div class="legend-dot" style="background:#666;border:1px dashed #888"></div>
         Mrtvý
+      </div>
+      <div style="margin-top:0.5rem">
+        <div class="legend-title">Vazby</div>
+        <div class="legend-item"><div class="legend-line" style="border-top:1.5px dashed #888"></div> Člen frakce</div>
+        <div class="legend-item"><div class="legend-line" style="border-top:3px solid #8B0000"></div> Velení</div>
+        <div class="legend-item"><div class="legend-line" style="border-top:2px dashed #1565C0"></div> Jednání</div>
+        <div class="legend-item"><div class="legend-line" style="border-top:2px dotted #5D7A3A"></div> Lokace</div>
       </div>`;
   }
 
@@ -950,5 +1187,5 @@ export const CloudMap = (() => {
     if (_currentMode) render(_currentMode);
   }
 
-  return { render, resetLayout };
+  return { render, resetLayout, savePositions: _savePositions, toggleFaction: _toggleFaction, showAllFactions: _showAllFactions };
 })();
