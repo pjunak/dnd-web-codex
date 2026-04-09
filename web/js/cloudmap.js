@@ -622,6 +622,15 @@ export const CloudMap = (() => {
     return '';
   }
 
+  // Marker geometry — sizes in graph-coordinate units (userSpaceOnUse)
+  const MARKER_TRI_W  = 14;   // triangle arrow length along edge
+  const MARKER_TRI_H  = 10;   // triangle arrow width perpendicular to edge
+  const MARKER_CIRC_R = 4.5;  // circle radius at source end
+  const MARKER_CIRC_D = MARKER_CIRC_R * 2;
+  // How far to inset line endpoints so markers don't overlap clouds
+  const INSET_SRC     = MARKER_CIRC_R;       // circle centre sits on the line end
+  const INSET_TGT     = MARKER_TRI_W - 1;    // triangle tip at refX, pull back
+
   // Ensure SVG marker definitions exist for a given colour
   function _ensureMarkers(color, markerId) {
     if (_edgeSvg.querySelector(`#${markerId}-tri`)) return;
@@ -630,33 +639,33 @@ export const CloudMap = (() => {
       defs = document.createElementNS(_NS, 'defs');
       _edgeSvg.insertBefore(defs, _edgeSvg.firstChild);
     }
-    // Triangle target arrow
+    // Triangle target arrow — tip is at refX (right edge of the marker box)
     const mTri = document.createElementNS(_NS, 'marker');
     mTri.setAttribute('id', `${markerId}-tri`);
-    mTri.setAttribute('markerWidth', '8');
-    mTri.setAttribute('markerHeight', '6');
-    mTri.setAttribute('refX', '7');
-    mTri.setAttribute('refY', '3');
+    mTri.setAttribute('markerWidth', MARKER_TRI_W);
+    mTri.setAttribute('markerHeight', MARKER_TRI_H);
+    mTri.setAttribute('refX', MARKER_TRI_W);
+    mTri.setAttribute('refY', MARKER_TRI_H / 2);
     mTri.setAttribute('orient', 'auto');
     mTri.setAttribute('markerUnits', 'userSpaceOnUse');
     const tri = document.createElementNS(_NS, 'path');
-    tri.setAttribute('d', 'M0,0 L8,3 L0,6 Z');
+    tri.setAttribute('d', `M0,0 L${MARKER_TRI_W},${MARKER_TRI_H / 2} L0,${MARKER_TRI_H} Z`);
     tri.setAttribute('fill', color);
     mTri.appendChild(tri);
     defs.appendChild(mTri);
-    // Circle source marker
+    // Circle source marker — centred on the line start
     const mCirc = document.createElementNS(_NS, 'marker');
     mCirc.setAttribute('id', `${markerId}-circ`);
-    mCirc.setAttribute('markerWidth', '6');
-    mCirc.setAttribute('markerHeight', '6');
-    mCirc.setAttribute('refX', '3');
-    mCirc.setAttribute('refY', '3');
+    mCirc.setAttribute('markerWidth', MARKER_CIRC_D);
+    mCirc.setAttribute('markerHeight', MARKER_CIRC_D);
+    mCirc.setAttribute('refX', MARKER_CIRC_R);
+    mCirc.setAttribute('refY', MARKER_CIRC_R);
     mCirc.setAttribute('orient', 'auto');
     mCirc.setAttribute('markerUnits', 'userSpaceOnUse');
     const circ = document.createElementNS(_NS, 'circle');
-    circ.setAttribute('cx', '3');
-    circ.setAttribute('cy', '3');
-    circ.setAttribute('r', '2.5');
+    circ.setAttribute('cx', MARKER_CIRC_R);
+    circ.setAttribute('cy', MARKER_CIRC_R);
+    circ.setAttribute('r', MARKER_CIRC_R);
     circ.setAttribute('fill', color);
     mCirc.appendChild(circ);
     defs.appendChild(mCirc);
@@ -779,12 +788,16 @@ export const CloudMap = (() => {
       const udx = dx / len;
       const udy = dy / len;
 
-      const srcExit  = _nodeIntersect(srcNode, sp.x, sp.y,
+      const srcRaw   = _nodeIntersect(srcNode, sp.x, sp.y,
                          srcNode.data('w') / 2, srcNode.data('h') / 2,  udx,  udy);
-      const tgtEntry = _nodeIntersect(tgtNode, tp.x, tp.y,
+      const tgtRaw   = _nodeIntersect(tgtNode, tp.x, tp.y,
                          tgtNode.data('w') / 2, tgtNode.data('h') / 2, -udx, -udy);
 
-      const visLen = Math.hypot(tgtEntry.x - srcExit.x, tgtEntry.y - srcExit.y);
+      // Inset endpoints so markers sit just outside the cloud boundary
+      const srcExit  = { x: srcRaw.x + udx * INSET_SRC, y: srcRaw.y + udy * INSET_SRC };
+      const tgtEntry = { x: tgtRaw.x - udx * INSET_TGT, y: tgtRaw.y - udy * INSET_TGT };
+
+      const visLen = Math.hypot(tgtRaw.x - srcRaw.x, tgtRaw.y - srcRaw.y);
 
       // Hide when clouds overlap
       if (visLen < 10) {
@@ -804,8 +817,9 @@ export const CloudMap = (() => {
       line2.style.opacity = svgOpacity;
       div.style.opacity = isFaded ? 0.07 : 1;
 
-      const mx = (srcExit.x + tgtEntry.x) / 2;
-      const my = (srcExit.y + tgtEntry.y) / 2;
+      // Midpoint of the raw boundary gap (for label placement at true visual centre)
+      const mx = (srcRaw.x + tgtRaw.x) / 2;
+      const my = (srcRaw.y + tgtRaw.y) / 2;
 
       if (label && visLen > 50) {
         // ── Labelled edge: split into two segments with gap ──
