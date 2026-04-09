@@ -900,16 +900,31 @@ export const CloudMap = (() => {
     const memberCounts = {};
     chars.forEach(c => { memberCounts[c.faction] = (memberCounts[c.faction] || 0) + 1; });
 
-    // — Faction hub nodes —
-    const hubNodes = Object.entries(factions).map(([fId, f]) =>
-      _proxy('hub_' + fId, 'faction', CW_HUB, _factionHubCloudH(f, memberCounts[fId] || 0),
-        { faction: fId })
-    );
+    // — Faction hub nodes (skip "neutral") —
+    const HIDDEN_HUB_FACTIONS = new Set(['neutral']);
+    const hubNodes = Object.entries(factions)
+      .filter(([fId]) => !HIDDEN_HUB_FACTIONS.has(fId))
+      .map(([fId, f]) =>
+        _proxy('hub_' + fId, 'faction', CW_HUB, _factionHubCloudH(f, memberCounts[fId] || 0),
+          { faction: fId })
+      );
 
     // — Character nodes —
     const charNodes = chars.map(c =>
       _proxy(c.id, 'character', CW, _charCloudH(c, 'frakce'), { faction: c.faction })
     );
+
+    // — Determine command-chain roots per faction —
+    // A "root" is a character NOT commanded by someone in the same faction.
+    const cmdRels = allRels.filter(r => r.type === 'commands');
+    const commandedByFaction = new Set(); // charIds that have a same-faction commander
+    cmdRels.forEach(r => {
+      const src = chars.find(c => c.id === r.source);
+      const tgt = chars.find(c => c.id === r.target);
+      if (src && tgt && src.faction === tgt.faction) {
+        commandedByFaction.add(tgt.id);
+      }
+    });
 
     // — Location nodes (deduplicated) —
     const usedLocIds = new Set();
@@ -923,9 +938,11 @@ export const CloudMap = (() => {
     // — Edges —
     const edges = [];
 
-    // Hub → member edges (dashed, faction color)
+    // Hub → member edges (only to chain roots, skip factions without hubs)
     chars.forEach(c => {
       if (!c.faction || !factions[c.faction]) return;
+      if (HIDDEN_HUB_FACTIONS.has(c.faction)) return;       // no hub for neutral
+      if (commandedByFaction.has(c.id)) return;              // connected via command chain
       const fColor = _factionColor(c.faction);
       edges.push({
         data: {
@@ -935,8 +952,9 @@ export const CloudMap = (() => {
       });
     });
 
-    // Hub → location edges (dotted, earthy green)
+    // Hub → location edges (dotted, earthy green; skip factions without hubs)
     facLocMap.forEach((locSet, fId) => {
+      if (HIDDEN_HUB_FACTIONS.has(fId)) return;
       for (const locId of locSet) {
         if (!locations.find(l => l.id === locId)) continue;
         edges.push({
@@ -962,9 +980,10 @@ export const CloudMap = (() => {
     });
 
     // — Add cloud cards —
-    Object.entries(factions).forEach(([fId, f]) =>
-      _addCloud(_factionHubCloudHTML(fId, f, memberCounts[fId] || 0), 'hub_' + fId)
-    );
+    Object.entries(factions).forEach(([fId, f]) => {
+      if (HIDDEN_HUB_FACTIONS.has(fId)) return;
+      _addCloud(_factionHubCloudHTML(fId, f, memberCounts[fId] || 0), 'hub_' + fId);
+    });
     chars.forEach(c => _addCloud(_charCloudHTML(c, 'frakce'), c.id));
     for (const locId of usedLocIds) {
       const loc = locations.find(l => l.id === locId);
@@ -978,7 +997,9 @@ export const CloudMap = (() => {
     if (leg) {
       leg.innerHTML = `
         <div class="legend-title">Frakce</div>
-        ${Object.entries(factions).map(([fId, f]) => `
+        ${Object.entries(factions)
+          .filter(([fId]) => !HIDDEN_HUB_FACTIONS.has(fId))
+          .map(([fId, f]) => `
           <label class="legend-item legend-filter" data-faction="${fId}">
             <input type="checkbox" ${_hiddenFactions.has(fId) ? '' : 'checked'}
                    onchange="CloudMap.toggleFaction('${fId}')">

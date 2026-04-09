@@ -14,6 +14,26 @@ export const EditTemplates = (() => {
     </div>`;
   }
 
+  /** Sort characters by faction order then alphabetically, with faction badge prefix.
+   *  Returns the sorted array (does not mutate the original). */
+  function _sortedChars(chars) {
+    const factions = Store.getFactions();
+    const fOrder   = Object.keys(factions);
+    return [...chars].sort((a, b) => {
+      const fa = fOrder.indexOf(a.faction);
+      const fb = fOrder.indexOf(b.faction);
+      const ia = fa < 0 ? 999 : fa;
+      const ib = fb < 0 ? 999 : fb;
+      if (ia !== ib) return ia - ib;
+      return (a.name || '').localeCompare(b.name || '', 'cs');
+    });
+  }
+
+  function _charBadge(c) {
+    const f = Store.getFactions()[c.faction];
+    return f ? f.badge + ' ' : '';
+  }
+
   const REL_TYPES = ["commands","ally","enemy","mission","mystery","captured_by","history","uncertain","negotiates"];
   const REL_LABELS = {
     commands:"velí", ally:"spojenec", enemy:"nepřítel", mission:"mise",
@@ -41,7 +61,7 @@ export const EditTemplates = (() => {
       </div>`;
     }).join("");
 
-    const charOpts    = others.map(c => `<option value="${c.id}">${_esc(c.name)}</option>`).join("");
+    const charOpts    = _sortedChars(others).map(c => `<option value="${c.id}">${_charBadge(c)}${_esc(c.name)}</option>`).join("");
     const relTypeOpts = REL_TYPES.map(t => `<option value="${t}">${REL_LABELS[t]}</option>`).join("");
 
     return `
@@ -171,10 +191,10 @@ export const EditTemplates = (() => {
     if (isNew) l = { id:"", name:"", type:"", status:"", description:"", notes:"", characters:[] };
     const uid = l.id || "new_loc";
     const allChars = Store.getCharacters();
-    const charChecks = allChars.map(c => `
+    const charChecks = _sortedChars(allChars).map(c => `
       <label class="edit-check">
         <input type="checkbox" value="${c.id}" ${(l.characters||[]).includes(c.id)?"checked":""}>
-        ${_esc(c.name)}
+        ${_charBadge(c)}${_esc(c.name)}
       </label>`).join("");
 
     return `
@@ -229,10 +249,10 @@ export const EditTemplates = (() => {
     const allLocs  = Store.getLocations();
     const allEvs   = Store.getEvents();
 
-    const charChecks = allChars.map(c => `
+    const charChecks = _sortedChars(allChars).map(c => `
       <label class="edit-check">
         <input type="checkbox" value="${c.id}" ${(e.characters||[]).includes(c.id)?"checked":""}>
-        ${_esc(c.name)}
+        ${_charBadge(c)}${_esc(c.name)}
       </label>`).join("");
     const locChecks = allLocs.map(l => `
       <label class="edit-check">
@@ -305,10 +325,10 @@ export const EditTemplates = (() => {
     const allChars = Store.getCharacters();
     const priOpts = ["kritická","vysoká","střední"].map(p =>
       `<option value="${p}" ${m.priority===p?"selected":""}>${p}</option>`).join("");
-    const charChecks = allChars.map(c => `
+    const charChecks = _sortedChars(allChars).map(c => `
       <label class="edit-check">
         <input type="checkbox" value="${c.id}" ${(m.characters||[]).includes(c.id)?"checked":""}>
-        ${_esc(c.name)}
+        ${_charBadge(c)}${_esc(c.name)}
       </label>`).join("");
 
     return `
