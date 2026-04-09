@@ -291,36 +291,18 @@
   letter-spacing: 0.02em;
 }
 
-/* ── Faction filter chips ─────────────────────────────────── */
-.faction-filter-chips {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex-wrap: wrap;
-}
-.faction-chip {
-  /* --fc: faction colour set per chip via inline style */
-  background: rgba(255,255,255,0.04);
-  border: 1px solid var(--fc, rgba(255,255,255,0.15));
-  border-radius: 12px;
-  padding: 0.2rem 0.55rem;
-  font-family: var(--font-ui);
-  font-size: 0.68rem;
-  color: var(--text-light);
+/* ── Faction filter checkboxes in legend ──────────────────── */
+.legend-filter {
   cursor: pointer;
-  transition: opacity 0.2s, border-color 0.2s, background 0.2s;
-  white-space: nowrap;
+  user-select: none;
 }
-.faction-chip:hover {
-  background: rgba(255,255,255,0.08);
-  border-color: var(--fc, rgba(255,255,255,0.3));
-}
-.faction-chip.dimmed {
-  opacity: 0.3;
-  border-color: rgba(255,255,255,0.08);
+.legend-filter input[type="checkbox"] {
+  accent-color: var(--accent-gold, #C8A040);
+  margin: 0 2px 0 0;
+  cursor: pointer;
 }
 
-/* ── Save positions button — visible only in edit mode ────── */
+/* ── Edit-mode-only buttons (save positions, reset layout) ── */
 .cm-save-pos {
   display: none;
 }

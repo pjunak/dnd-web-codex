@@ -353,21 +353,6 @@ export const CloudMap = (() => {
     if (_hiddenFactions.has(fId)) _hiddenFactions.delete(fId);
     else _hiddenFactions.add(fId);
     _applyFactionFilter();
-    // Update chip UI
-    document.querySelectorAll('.faction-chip[data-faction]').forEach(btn => {
-      const f = btn.dataset.faction;
-      if (f === 'all') {
-        btn.classList.toggle('dimmed', _hiddenFactions.size > 0);
-      } else {
-        btn.classList.toggle('dimmed', _hiddenFactions.has(f));
-      }
-    });
-  }
-
-  function _showAllFactions() {
-    _hiddenFactions.clear();
-    _applyFactionFilter();
-    document.querySelectorAll('.faction-chip').forEach(btn => btn.classList.remove('dimmed'));
   }
 
   function _applyFactionFilter() {
@@ -457,7 +442,7 @@ export const CloudMap = (() => {
           <a href="#/mapa/frakce"    class="map-mode-btn ${mode==='frakce'    ?'active':''}">Frakce</a>
           <a href="#/mapa/vztahy"    class="map-mode-btn ${mode==='vztahy'    ?'active':''}">Vztahy</a>
           <a href="#/mapa/tajemstvi" class="map-mode-btn ${mode==='tajemstvi' ?'active':''}">Záhady</a>
-          <button class="map-mode-btn" onclick="CloudMap.resetLayout()" title="Vymaže uložené pozice a znovu rozloží uzly automaticky">⟳ Rozložení</button>
+          <button class="map-mode-btn cm-save-pos" onclick="CloudMap.resetLayout()" title="Vymaže uložené pozice a znovu rozloží uzly automaticky">⟳ Rozložení</button>
           <button class="map-mode-btn cm-save-pos" onclick="CloudMap.savePositions()" title="Uloží aktuální pozice uzlů">💾 Uložit pozice</button>
           <span class="map-hint">Klik = detail · Táhni = pohyb · Scroll = zoom</span>
         </div>
@@ -988,51 +973,37 @@ export const CloudMap = (() => {
 
     _bind();
 
-    // — Filter chips —
-    const filterContainer = document.createElement('div');
-    filterContainer.className = 'faction-filter-chips';
-    filterContainer.id = 'faction-filter';
-    filterContainer.innerHTML =
-      `<button class="faction-chip" data-faction="all" onclick="CloudMap.showAllFactions()">Vše</button>` +
-      Object.entries(factions).map(([fId, f]) =>
-        `<button class="faction-chip" data-faction="${fId}" style="--fc:${f.color}" onclick="CloudMap.toggleFaction('${fId}')">${f.badge} ${_esc(f.name)}</button>`
-      ).join('');
-    const toolbar = document.querySelector('.map-toolbar');
-    const hint = toolbar.querySelector('.map-hint');
-    toolbar.insertBefore(filterContainer, hint);
-
-    // Restore filter state from previous render
-    if (_hiddenFactions.size) _applyFactionFilter();
-    document.querySelectorAll('.faction-chip[data-faction]').forEach(btn => {
-      const f = btn.dataset.faction;
-      if (f === 'all') btn.classList.toggle('dimmed', _hiddenFactions.size > 0);
-      else btn.classList.toggle('dimmed', _hiddenFactions.has(f));
-    });
-
-    // — Legend —
+    // — Legend with faction filter checkboxes —
     const leg = document.getElementById('map-legend');
-    if (leg) leg.innerHTML = `
-      <div class="legend-title">Frakce</div>
-      ${Object.entries(factions).map(([, f]) => `
+    if (leg) {
+      leg.innerHTML = `
+        <div class="legend-title">Frakce</div>
+        ${Object.entries(factions).map(([fId, f]) => `
+          <label class="legend-item legend-filter" data-faction="${fId}">
+            <input type="checkbox" ${_hiddenFactions.has(fId) ? '' : 'checked'}
+                   onchange="CloudMap.toggleFaction('${fId}')">
+            <div class="legend-dot" style="background:${f.color}"></div>
+            ${f.badge} ${_esc(f.name)}
+          </label>`).join('')}
         <div class="legend-item">
-          <div class="legend-dot" style="background:${f.color}"></div>
-          ${f.badge} ${f.name}
-        </div>`).join('')}
-      <div class="legend-item">
-        <div class="legend-dot" style="background:#5D7A3A"></div>
-        📍 Místo
-      </div>
-      <div class="legend-item" style="margin-top:0.4rem;opacity:0.55">
-        <div class="legend-dot" style="background:#666;border:1px dashed #888"></div>
-        Mrtvý
-      </div>
-      <div style="margin-top:0.5rem">
-        <div class="legend-title">Vazby</div>
-        <div class="legend-item"><div class="legend-line" style="border-top:1.5px dashed #888"></div> Člen frakce</div>
-        <div class="legend-item"><div class="legend-line" style="border-top:3px solid #8B0000"></div> Velení</div>
-        <div class="legend-item"><div class="legend-line" style="border-top:2px dashed #1565C0"></div> Jednání</div>
-        <div class="legend-item"><div class="legend-line" style="border-top:2px dotted #5D7A3A"></div> Lokace</div>
-      </div>`;
+          <div class="legend-dot" style="background:#5D7A3A"></div>
+          📍 Místo
+        </div>
+        <div class="legend-item" style="margin-top:0.4rem;opacity:0.55">
+          <div class="legend-dot" style="background:#666;border:1px dashed #888"></div>
+          Mrtvý
+        </div>
+        <div style="margin-top:0.5rem">
+          <div class="legend-title">Vazby</div>
+          <div class="legend-item"><div class="legend-line" style="border-top:1.5px dashed #888"></div> Člen frakce</div>
+          <div class="legend-item"><div class="legend-line" style="border-top:3px solid #8B0000"></div> Velení</div>
+          <div class="legend-item"><div class="legend-line" style="border-top:2px dashed #1565C0"></div> Jednání</div>
+          <div class="legend-item"><div class="legend-line" style="border-top:2px dotted #5D7A3A"></div> Lokace</div>
+        </div>`;
+
+      // Restore filter state
+      if (_hiddenFactions.size) _applyFactionFilter();
+    }
   }
 
   // ── MODE: VZTAHY ────────────────────────────────────────────
@@ -1187,5 +1158,5 @@ export const CloudMap = (() => {
     if (_currentMode) render(_currentMode);
   }
 
-  return { render, resetLayout, savePositions: _savePositions, toggleFaction: _toggleFaction, showAllFactions: _showAllFactions };
+  return { render, resetLayout, savePositions: _savePositions, toggleFaction: _toggleFaction };
 })();
