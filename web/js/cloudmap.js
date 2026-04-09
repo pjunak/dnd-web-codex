@@ -584,7 +584,7 @@ export const CloudMap = (() => {
       // Sync faction glow position
       const glow = _glowMap[id];
       if (glow) {
-        const gs = glow.classList.contains('cm-glow-sm') ? 220 : 400;
+        const gs = glow.classList.contains('cm-glow-sm') ? 320 : 550;
         glow.style.left = (pos.x - gs / 2) + 'px';
         glow.style.top  = (pos.y - gs / 2) + 'px';
       }
