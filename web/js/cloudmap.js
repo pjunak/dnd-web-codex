@@ -105,14 +105,16 @@ export const CloudMap = (() => {
   }
 
   // ── Faction hub / location cloud sizes ───────────────────────
-  const CW_HUB = 210;
-  const IW_HUB = CW_HUB - PAD * 2;
+  const CW_HUB      = 210;
+  const PAD_HUB     = 20;                // wider padding for pill shape
+  const IW_HUB      = CW_HUB - PAD_HUB * 2;
+  const H_OVERHEAD_HUB = 14;             // border(3+1) + padding-bottom(10)
 
   function _factionHubCloudH(faction, count) {
-    // strip + name + divider + 1 fact row (member count) + overhead
+    // strip + name + divider + 1 fact row (member count) + pill overhead
     let rows = 1;
     if (faction.description) rows += Math.min(2, _wrap(faction.description, FONT_FACT, IW_HUB).length);
-    return _base() + rows * H_FACT + H_OVERHEAD;
+    return _base() + rows * H_FACT + H_OVERHEAD_HUB;
   }
 
   function _factionHubCloudHTML(fId, faction, count) {
@@ -402,6 +404,12 @@ export const CloudMap = (() => {
       const elObj = _edgeLabels[edge.id()];
       if (elObj) elObj.div.style.display = hidden ? 'none' : '';
     });
+
+    // Hide faction glows for hidden factions
+    Object.entries(_glowMap).forEach(([nodeId, glow]) => {
+      const fId = nodeId.replace('hub_', '');
+      glow.style.display = _hiddenFactions.has(fId) ? 'none' : '';
+    });
   }
 
   // ── Cytoscape state ─────────────────────────────────────────
@@ -409,6 +417,7 @@ export const CloudMap = (() => {
   let _cloudLayer  = null;
   let _cloudMap    = {}; // nodeId → wrapper div
   let _edgeLabels  = {}; // edgeId → {div}
+  let _glowMap     = {}; // 'hub_fId' → glow div
 
   // Inertia tracking
   let _prevPos    = {}; // nodeId → {x,y} at previous drag event
@@ -426,6 +435,7 @@ export const CloudMap = (() => {
     _cloudLayer = null;
     _cloudMap   = {};
     _edgeLabels = {};
+    _glowMap    = {};
     _prevPos    = {};
     _vel        = {};
     _inertiaRaf = {};
@@ -561,13 +571,22 @@ export const CloudMap = (() => {
     _cloudLayer.style.transform = `translate(${pan.x}px,${pan.y}px) scale(${zoom})`;
 
     _cy.nodes().forEach(node => {
-      const wrapper = _cloudMap[node.id()];
+      const id = node.id();
+      const wrapper = _cloudMap[id];
       if (!wrapper) return;
       const pos = node.position();
       const w   = node.data('w');
       const h   = node.data('h');
       wrapper.style.left = (pos.x - w / 2) + 'px';
       wrapper.style.top  = (pos.y - h / 2) + 'px';
+
+      // Sync faction glow position
+      const glow = _glowMap[id];
+      if (glow) {
+        const gs = 400;
+        glow.style.left = (pos.x - gs / 2) + 'px';
+        glow.style.top  = (pos.y - gs / 2) + 'px';
+      }
     });
 
     _syncEdgeLabels();
@@ -591,6 +610,29 @@ export const CloudMap = (() => {
     const ty = udy !== 0 ? hh / Math.abs(udy) : Infinity;
     const t  = Math.min(tx, ty);
     return { x: cx + udx * t, y: cy + udy * t };
+  }
+
+  // Pill = horizontal stadium: flat top/bottom, semicircle caps at left/right.
+  function _pillIntersect(cx, cy, hw, hh, udx, udy) {
+    const r      = hh;                        // cap radius = half-height
+    const flatHW = Math.max(0, hw - r);       // half-width of the flat portion
+    const tx     = udx !== 0 ? flatHW / Math.abs(udx) : Infinity;
+    const ty     = udy !== 0 ? hh / Math.abs(udy) : Infinity;
+    if (tx < ty && udx !== 0) {
+      // Exits through a semicircle cap
+      const capCx = cx + Math.sign(udx) * flatHW;
+      const t = r / Math.hypot(udx, udy);
+      return { x: capCx + udx * t, y: cy + udy * t };
+    }
+    // Exits through flat top/bottom
+    const t = Math.min(tx, ty);
+    return { x: cx + udx * t, y: cy + udy * t };
+  }
+
+  // Choose intersection function based on node type
+  function _nodeIntersect(node, cx, cy, hw, hh, udx, udy) {
+    if (node.data('type') === 'faction') return _pillIntersect(cx, cy, hw, hh, udx, udy);
+    return _rectIntersect(cx, cy, hw, hh, udx, udy);
   }
 
   function _addEdgeLabels() {
@@ -626,12 +668,11 @@ export const CloudMap = (() => {
       const udx = dx / len;
       const udy = dy / len;
 
-      // Where the edge exits the source rectangle and enters the target rectangle.
-      // _rectIntersect uses each node's actual half-dimensions, treating them as
-      // the rectangles they are rather than circles of a fixed radius.
-      const srcExit  = _rectIntersect(sp.x, sp.y,
+      // Where the edge exits the source boundary and enters the target boundary.
+      // Uses pill intersection for faction hubs, rectangle for everything else.
+      const srcExit  = _nodeIntersect(srcNode, sp.x, sp.y,
                          srcNode.data('w') / 2, srcNode.data('h') / 2,  udx,  udy);
-      const tgtEntry = _rectIntersect(tp.x, tp.y,
+      const tgtEntry = _nodeIntersect(tgtNode, tp.x, tp.y,
                          tgtNode.data('w') / 2, tgtNode.data('h') / 2, -udx, -udy);
 
       // Visible edge length — only the gap between the two cloud faces
@@ -977,6 +1018,16 @@ export const CloudMap = (() => {
       name: 'cose', animate: true, animationDuration: 700,
       nodeRepulsion: 24000, gravity: 0.12, idealEdgeLength: 200,
       padding: 90, randomize: false, numIter: 3000,
+    });
+
+    // — Faction glow divs (inserted first so they render behind clouds) —
+    Object.entries(factions).forEach(([fId, f]) => {
+      if (HIDDEN_HUB_FACTIONS.has(fId)) return;
+      const glow = document.createElement('div');
+      glow.className = 'cm-glow';
+      glow.style.cssText = `--gc:${f.color};`;
+      _cloudLayer.insertBefore(glow, _cloudLayer.firstChild);
+      _glowMap['hub_' + fId] = glow;
     });
 
     // — Add cloud cards —
