@@ -419,11 +419,15 @@ export const CloudMap = (() => {
     });
   }
 
+  // ── SVG namespace ────────────────────────────────────────────
+  const _NS = 'http://www.w3.org/2000/svg';
+
   // ── Cytoscape state ─────────────────────────────────────────
   let _cy          = null;
   let _cloudLayer  = null;
+  let _edgeSvg     = null; // SVG overlay for custom edge rendering
   let _cloudMap    = {}; // nodeId → wrapper div
-  let _edgeLabels  = {}; // edgeId → {div}
+  let _edgeLabels  = {}; // edgeId → {div, label, svgEls}
   let _glowMap     = {}; // 'hub_fId' → glow div
 
   // Inertia tracking
@@ -437,9 +441,13 @@ export const CloudMap = (() => {
 
   function _destroy() {
     Object.keys(_inertiaRaf).forEach(_killInertia);
-    Object.values(_edgeLabels).forEach(({ div }) => div.remove());
+    Object.values(_edgeLabels).forEach(({ div, svgEls }) => {
+      if (div) div.remove();
+      if (svgEls) svgEls.forEach(el => el.remove());
+    });
     if (_cy) { _cy.destroy(); _cy = null; }
     _cloudLayer = null;
+    _edgeSvg    = null;
     _cloudMap   = {};
     _edgeLabels = {};
     _glowMap    = {};
@@ -509,32 +517,20 @@ export const CloudMap = (() => {
           }
         },
         {
+          // Native edges are hidden — we render them as SVG with gaps for labels.
+          // Cytoscape edges still exist for layout/physics; visuals are in _edgeSvg.
           selector: 'edge',
           style: {
-            'width':                      'data(width)',
-            'line-color':                 'data(color)',
-            // Arrows at both endpoints, sitting just outside the cloud boundary.
-            'source-arrow-shape':         'circle',
-            'source-arrow-color':         'data(color)',
-            'source-arrow-fill':          'filled',
-            'target-arrow-color':         'data(color)',
-            'target-arrow-shape':         'triangle',
-            'target-arrow-fill':          'filled',
-            'arrow-scale':                1.4,
-            'target-distance-from-node':  3,
-            'source-distance-from-node':  3,
-            'curve-style':                'unbundled-bezier',
-            'control-point-distances':    0,
-            'control-point-weights':      0.5,
-            'line-style':                 'data(lineStyle)',
-            'opacity':                    0.82,
-            // Labels are rendered as HTML divs (see _addEdgeLabels / _syncEdgeLabels)
-            // so that they can be offset using the true perpendicular edge vector.
-            'label':                      '',
+            'width':         0,
+            'opacity':       0,
+            'line-opacity':  0,
+            'arrow-scale':   0,
+            'overlay-opacity': 0,
           }
         },
-        { selector: '.faded',       style: { opacity: 0.07 } },
-        { selector: '.highlighted', style: { opacity: 1    } },
+        // Fading/highlighting only affects nodes (edges are drawn in SVG)
+        { selector: 'node.faded',       style: { opacity: 0.07 } },
+        { selector: 'node.highlighted', style: { opacity: 1    } },
         { selector: '.cm-filter-hidden', style: { opacity: 0, 'events': 'no' } },
       ],
       layout,
@@ -552,6 +548,17 @@ export const CloudMap = (() => {
       'position:absolute;inset:0;pointer-events:none;' +
       'transform-origin:0 0;overflow:visible;z-index:5;';
     container.appendChild(_cloudLayer);
+
+    // SVG edge layer — lives inside cloud layer, inserted first so it renders
+    // below glow divs and cloud cards. Edges are drawn here with gaps for labels.
+    _edgeSvg = document.createElementNS(_NS, 'svg');
+    _edgeSvg.setAttribute('class', 'cm-edge-svg');
+    _edgeSvg.style.cssText =
+      'position:absolute;left:0;top:0;overflow:visible;pointer-events:none;';
+    _edgeSvg.setAttribute('width', '0');
+    _edgeSvg.setAttribute('height', '0');
+    // Insert as first child of cloud layer so everything else renders on top
+    _cloudLayer.insertBefore(_edgeSvg, _cloudLayer.firstChild);
 
     return _cy;
   }
@@ -599,11 +606,61 @@ export const CloudMap = (() => {
     _syncEdgeLabels();
   }
 
-  // ── HTML edge labels — centred on line with background gap ────
-  // Each label div lives in graph-coordinate space (same as clouds),
-  // centred on the visible midpoint of the edge. A background color
-  // matching --bg-deep masks the Cytoscape canvas line underneath,
-  // creating a clean gap where the text sits.
+  // ── SVG edge rendering + HTML labels with true line gaps ───────
+  // Cytoscape edges are hidden (opacity 0). We draw edges as SVG lines
+  // inside _edgeSvg (which lives in the cloud layer, below clouds).
+  // Labelled edges are split into two segments with a gap for the text.
+  // HTML label divs sit in that gap, centred on the edge midpoint.
+
+  const EDGE_LABEL_FONT   = '12px Inter, sans-serif';
+  const EDGE_LABEL_LINE_H = 12 * 1.35;
+  const LABEL_GAP_PAD     = 5;   // extra gap each side beyond text bounds
+
+  function _dashArray(lineStyle, width) {
+    if (lineStyle === 'dashed') return `${width * 4},${width * 3}`;
+    if (lineStyle === 'dotted') return `${width},${width * 2.5}`;
+    return '';
+  }
+
+  // Ensure SVG marker definitions exist for a given colour
+  function _ensureMarkers(color, markerId) {
+    if (_edgeSvg.querySelector(`#${markerId}-tri`)) return;
+    let defs = _edgeSvg.querySelector('defs');
+    if (!defs) {
+      defs = document.createElementNS(_NS, 'defs');
+      _edgeSvg.insertBefore(defs, _edgeSvg.firstChild);
+    }
+    // Triangle target arrow
+    const mTri = document.createElementNS(_NS, 'marker');
+    mTri.setAttribute('id', `${markerId}-tri`);
+    mTri.setAttribute('markerWidth', '8');
+    mTri.setAttribute('markerHeight', '6');
+    mTri.setAttribute('refX', '7');
+    mTri.setAttribute('refY', '3');
+    mTri.setAttribute('orient', 'auto');
+    mTri.setAttribute('markerUnits', 'userSpaceOnUse');
+    const tri = document.createElementNS(_NS, 'path');
+    tri.setAttribute('d', 'M0,0 L8,3 L0,6 Z');
+    tri.setAttribute('fill', color);
+    mTri.appendChild(tri);
+    defs.appendChild(mTri);
+    // Circle source marker
+    const mCirc = document.createElementNS(_NS, 'marker');
+    mCirc.setAttribute('id', `${markerId}-circ`);
+    mCirc.setAttribute('markerWidth', '6');
+    mCirc.setAttribute('markerHeight', '6');
+    mCirc.setAttribute('refX', '3');
+    mCirc.setAttribute('refY', '3');
+    mCirc.setAttribute('orient', 'auto');
+    mCirc.setAttribute('markerUnits', 'userSpaceOnUse');
+    const circ = document.createElementNS(_NS, 'circle');
+    circ.setAttribute('cx', '3');
+    circ.setAttribute('cy', '3');
+    circ.setAttribute('r', '2.5');
+    circ.setAttribute('fill', color);
+    mCirc.appendChild(circ);
+    defs.appendChild(mCirc);
+  }
 
   // Returns the point where a ray from (cx,cy) in unit direction (udx,udy)
   // exits the axis-aligned rectangle centred at (cx,cy) with half-sizes (hw,hh).
@@ -639,73 +696,178 @@ export const CloudMap = (() => {
   }
 
   function _addEdgeLabels() {
-    Object.values(_edgeLabels).forEach(({ div }) => div.remove());
+    // Clean up previous edge labels and SVG elements
+    Object.values(_edgeLabels).forEach(({ div, svgEls }) => {
+      if (div) div.remove();
+      if (svgEls) svgEls.forEach(el => el.remove());
+    });
     _edgeLabels = {};
+    // Clear old marker defs
+    if (_edgeSvg) {
+      const oldDefs = _edgeSvg.querySelector('defs');
+      if (oldDefs) oldDefs.remove();
+    }
 
     _cy.edges().forEach(edge => {
-      const label = edge.data('label');
-      if (!label) return;
+      const label  = edge.data('label') || '';
+      const color  = edge.data('color') || '#666';
+      const width  = edge.data('width') || 2;
+      const lStyle = edge.data('lineStyle') || 'solid';
+      const eid    = edge.id();
+
+      // Marker ID from colour (strip non-alphanumeric for valid SVG id)
+      const markerId = 'mk-' + color.replace(/[^a-zA-Z0-9]/g, '');
+      _ensureMarkers(color, markerId);
+
+      // Two SVG line segments per edge (line1: src→gap, line2: gap→tgt)
+      const line1 = document.createElementNS(_NS, 'line');
+      const line2 = document.createElementNS(_NS, 'line');
+      const baseStyle = `stroke:${color};stroke-width:${width};opacity:0.82;stroke-linecap:round;`;
+      line1.setAttribute('style', baseStyle);
+      line2.setAttribute('style', baseStyle);
+      const dash = _dashArray(lStyle, width);
+      if (dash) {
+        line1.setAttribute('stroke-dasharray', dash);
+        line2.setAttribute('stroke-dasharray', dash);
+      }
+      _edgeSvg.appendChild(line1);
+      _edgeSvg.appendChild(line2);
+
+      // HTML label div
       const div = document.createElement('div');
       div.className = 'cm-edge-label';
-      div.textContent = label;
-      div.style.color = edge.data('color') || '#D4B87A';
+      if (label) {
+        div.textContent = label;
+        div.style.color = color;
+      }
       _cloudLayer.appendChild(div);
-      _edgeLabels[edge.id()] = { div, label };
+
+      _edgeLabels[eid] = { div, label, svgEls: [line1, line2], markerId };
     });
   }
 
   function _syncEdgeLabels() {
-    Object.entries(_edgeLabels).forEach(([eid, { div, label }]) => {
+    Object.entries(_edgeLabels).forEach(([eid, rec]) => {
+      const { div, label, svgEls, markerId } = rec;
+      const [line1, line2] = svgEls;
       const edge = _cy.getElementById(eid);
-      if (!edge || !edge.length) return;
+
+      // Hide everything if edge gone or filter-hidden
+      if (!edge || !edge.length || edge.hasClass('cm-filter-hidden')) {
+        div.style.visibility = 'hidden';
+        line1.setAttribute('visibility', 'hidden');
+        line2.setAttribute('visibility', 'hidden');
+        return;
+      }
 
       const srcNode = edge.source();
       const tgtNode = edge.target();
+      // Also hide if either endpoint is filter-hidden
+      if (srcNode.hasClass('cm-filter-hidden') || tgtNode.hasClass('cm-filter-hidden')) {
+        div.style.visibility = 'hidden';
+        line1.setAttribute('visibility', 'hidden');
+        line2.setAttribute('visibility', 'hidden');
+        return;
+      }
+
       const sp = srcNode.position();
       const tp = tgtNode.position();
 
-      // Unit direction vector between node centres
       const dx  = tp.x - sp.x;
       const dy  = tp.y - sp.y;
       const len = Math.hypot(dx, dy) || 1;
       const udx = dx / len;
       const udy = dy / len;
 
-      // Where the edge exits the source boundary and enters the target boundary.
-      // Uses pill intersection for faction hubs, rectangle for everything else.
       const srcExit  = _nodeIntersect(srcNode, sp.x, sp.y,
                          srcNode.data('w') / 2, srcNode.data('h') / 2,  udx,  udy);
       const tgtEntry = _nodeIntersect(tgtNode, tp.x, tp.y,
                          tgtNode.data('w') / 2, tgtNode.data('h') / 2, -udx, -udy);
 
-      // Visible edge length — only the gap between the two cloud faces
-      const vdx = tgtEntry.x - srcExit.x;
-      const vdy = tgtEntry.y - srcExit.y;
-      const visLen = Math.hypot(vdx, vdy);
+      const visLen = Math.hypot(tgtEntry.x - srcExit.x, tgtEntry.y - srcExit.y);
 
-      // Hide when clouds are touching or overlapping
-      if (visLen < 50) { div.style.visibility = 'hidden'; return; }
-      div.style.visibility = 'visible';
+      // Hide when clouds overlap
+      if (visLen < 10) {
+        div.style.visibility = 'hidden';
+        line1.setAttribute('visibility', 'hidden');
+        line2.setAttribute('visibility', 'hidden');
+        return;
+      }
 
-      // Midpoint of the *visible* edge — sits exactly between the two cloud faces
+      line1.setAttribute('visibility', 'visible');
+      line2.setAttribute('visibility', 'visible');
+
+      // Mirror Cytoscape faded/highlighted opacity on SVG lines + label
+      const isFaded = edge.hasClass('faded');
+      const svgOpacity = isFaded ? 0.07 : 0.82;
+      line1.style.opacity = svgOpacity;
+      line2.style.opacity = svgOpacity;
+      div.style.opacity = isFaded ? 0.07 : 1;
+
       const mx = (srcExit.x + tgtEntry.x) / 2;
       const my = (srcExit.y + tgtEntry.y) / 2;
 
-      // Width = visible edge length minus small end margins.
-      // The div lives in graph-coordinate space so this scales with zoom.
-      const labelW = Math.max(36, visLen - 20); // 10px margin each side
-      div.style.width = labelW + 'px';
+      if (label && visLen > 50) {
+        // ── Labelled edge: split into two segments with gap ──
+        div.style.visibility = 'visible';
 
-      // Rotate to align with edge direction, never upside-down
-      let angle = Math.atan2(dy, dx) * 180 / Math.PI;
-      if (angle > 90 || angle < -90) angle += angle > 0 ? -180 : 180;
-      div.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
+        const labelW = Math.max(36, visLen - 20);
+        div.style.width = labelW + 'px';
 
-      // Centre the label directly on the edge midpoint.
-      // The label's background masks the Cytoscape line underneath,
-      // creating a clean gap where the text sits.
-      div.style.left = mx + 'px';
-      div.style.top  = my + 'px';
+        // Measure wrapped text to determine gap size along edge direction
+        const lines = _wrap(label, EDGE_LABEL_FONT, labelW);
+        const textH = lines.length * EDGE_LABEL_LINE_H;
+        // Gap half-length: how far from midpoint in each direction
+        // Use the longest wrapped line width (not the container) for tighter gap
+        let maxLineW = 0;
+        for (const ln of lines) {
+          _ctx.font = EDGE_LABEL_FONT;
+          maxLineW = Math.max(maxLineW, _ctx.measureText(ln).width);
+        }
+        const gapHalfLen = Math.min(
+          (maxLineW / 2 + LABEL_GAP_PAD),
+          visLen / 2 - 4
+        );
+
+        const gapStart = { x: mx - udx * gapHalfLen, y: my - udy * gapHalfLen };
+        const gapEnd   = { x: mx + udx * gapHalfLen, y: my + udy * gapHalfLen };
+
+        // Segment 1: source → gap start (with source circle marker)
+        line1.setAttribute('x1', srcExit.x);
+        line1.setAttribute('y1', srcExit.y);
+        line1.setAttribute('x2', gapStart.x);
+        line1.setAttribute('y2', gapStart.y);
+        line1.setAttribute('marker-start', `url(#${markerId}-circ)`);
+        line1.removeAttribute('marker-end');
+
+        // Segment 2: gap end → target (with target triangle marker)
+        line2.setAttribute('x1', gapEnd.x);
+        line2.setAttribute('y1', gapEnd.y);
+        line2.setAttribute('x2', tgtEntry.x);
+        line2.setAttribute('y2', tgtEntry.y);
+        line2.removeAttribute('marker-start');
+        line2.setAttribute('marker-end', `url(#${markerId}-tri)`);
+        line2.setAttribute('visibility', 'visible');
+
+        // Position label at midpoint, rotated to follow edge
+        let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+        if (angle > 90 || angle < -90) angle += angle > 0 ? -180 : 180;
+        div.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
+        div.style.left = mx + 'px';
+        div.style.top  = my + 'px';
+      } else {
+        // ── Unlabelled or too-short: single line, no gap ──
+        div.style.visibility = 'hidden';
+
+        line1.setAttribute('x1', srcExit.x);
+        line1.setAttribute('y1', srcExit.y);
+        line1.setAttribute('x2', tgtEntry.x);
+        line1.setAttribute('y2', tgtEntry.y);
+        line1.setAttribute('marker-start', `url(#${markerId}-circ)`);
+        line1.setAttribute('marker-end', `url(#${markerId}-tri)`);
+
+        line2.setAttribute('visibility', 'hidden');
+      }
     });
   }
 
@@ -1047,6 +1209,7 @@ export const CloudMap = (() => {
     }
 
     _bind();
+    _addEdgeLabels();
 
     // — Legend with faction filter checkboxes —
     const leg = document.getElementById('map-legend');
@@ -1156,6 +1319,7 @@ export const CloudMap = (() => {
     mysteries.forEach(m => _addCloud(_mysteryCloudHTML(m), m.id));
     involved.forEach(c  => _addCloud(_charCloudHTML(c, 'tajemstvi'), c.id));
     _bind();
+    _addEdgeLabels();
 
     const leg = document.getElementById('map-legend');
     if (leg) leg.innerHTML = `
@@ -1207,6 +1371,7 @@ export const CloudMap = (() => {
     events.forEach(e  => _addCloud(_eventCloudHTML(e), e.id));
     involved.forEach(c => _addCloud(_charCloudHTML(c, 'casova-osa'), c.id));
     _bind();
+    _addEdgeLabels();
 
     const leg = document.getElementById('map-legend');
     if (leg) leg.innerHTML = `
