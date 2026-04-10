@@ -34,15 +34,6 @@ function _imageFilter(_req, file, cb) {
   cb(null, file.mimetype.startsWith('image/'));
 }
 
-const flatStorage = multer.diskStorage({
-  destination: PORTRAITS_DIR,
-  filename: (_req, file, cb) => {
-    const ext  = path.extname(file.originalname).toLowerCase() || '.jpg';
-    const name = Date.now() + '_' + crypto.randomBytes(6).toString('hex') + ext;
-    cb(null, name);
-  },
-});
-
 const charStorage = multer.diskStorage({
   destination: (req, _file, cb) => {
     const charId = (req.params.charId || '').replace(/[^a-z0-9_\-]/gi, '_').substring(0, 60);
@@ -56,7 +47,6 @@ const charStorage = multer.diskStorage({
   },
 });
 
-const uploadFlat = multer({ storage: flatStorage, limits: { fileSize: 20 * 1024 * 1024 }, fileFilter: _imageFilter });
 const uploadChar = multer({ storage: charStorage, limits: { fileSize: 20 * 1024 * 1024 }, fileFilter: _imageFilter });
 
 function _dataHash() {
@@ -136,6 +126,39 @@ app.patch('/api/data', requireAuth, (req, res) => {
     let container = type === 'factions' ? {} : [];
     if (fs.existsSync(p)) container = JSON.parse(fs.readFileSync(p, 'utf8'));
 
+    // Auto-migrate portrait to canonical subfolder on character save
+    if (type === 'characters' && action === 'save' && payload?.id && payload?.portrait) {
+      const charId         = payload.id;
+      const cleanUrl       = payload.portrait.split('?')[0];
+      const expectedPrefix = `/portraits/${charId}/portrait.`;
+      if (!cleanUrl.startsWith(expectedPrefix)) {
+        const relPath = cleanUrl.replace(/^\/portraits\//, '');
+        const srcFile = path.join(PORTRAITS_DIR, ...relPath.split('/').filter(Boolean));
+        if (fs.existsSync(srcFile) && fs.statSync(srcFile).isFile()) {
+          const ext      = path.extname(srcFile).toLowerCase() || '.jpg';
+          const destDir  = path.join(PORTRAITS_DIR, charId);
+          const destFile = path.join(destDir, `portrait${ext}`);
+          try {
+            fs.mkdirSync(destDir, { recursive: true });
+            try { fs.readdirSync(destDir).filter(f => /^portrait\./i.test(f)).forEach(f => fs.unlinkSync(path.join(destDir, f))); } catch (_) {}
+            fs.renameSync(srcFile, destFile);
+            const srcDir = path.dirname(srcFile);
+            if (srcDir !== PORTRAITS_DIR) {
+              try { if (fs.readdirSync(srcDir).length === 0) fs.rmdirSync(srcDir); } catch (_) {}
+            }
+            payload.portrait = `/portraits/${charId}/portrait${ext}`;
+          } catch (e) {
+            console.warn(`[portrait] Migration failed for ${charId}:`, e.message);
+            payload.portrait = cleanUrl;
+          }
+        } else {
+          payload.portrait = cleanUrl;
+        }
+      } else {
+        payload.portrait = cleanUrl;
+      }
+    }
+
     if (action === 'save') {
       if (Array.isArray(container)) {
         if (type === 'relationships') {
@@ -162,6 +185,22 @@ app.patch('/api/data', requireAuth, (req, res) => {
               rels = rels.filter(r => r.source !== payload.id && r.target !== payload.id);
               fs.writeFileSync(relP, JSON.stringify(rels, null, 2), 'utf8');
             }
+            const evtP = getFile('events');
+            if (fs.existsSync(evtP)) {
+              let evts = JSON.parse(fs.readFileSync(evtP, 'utf8'));
+              if (evts.some(e => (e.characters || []).includes(payload.id))) {
+                evts = evts.map(e => ({ ...e, characters: (e.characters || []).filter(cid => cid !== payload.id) }));
+                fs.writeFileSync(evtP, JSON.stringify(evts, null, 2), 'utf8');
+              }
+            }
+            const mysP = getFile('mysteries');
+            if (fs.existsSync(mysP)) {
+              let mys = JSON.parse(fs.readFileSync(mysP, 'utf8'));
+              if (mys.some(m => (m.characters || []).includes(payload.id))) {
+                mys = mys.map(m => ({ ...m, characters: (m.characters || []).filter(cid => cid !== payload.id) }));
+                fs.writeFileSync(mysP, JSON.stringify(mys, null, 2), 'utf8');
+              }
+            }
           }
         }
       } else {
@@ -179,11 +218,6 @@ app.patch('/api/data', requireAuth, (req, res) => {
 
 app.get('/api/version', (_req, res) => {
   res.json({ hash: _dataHash() });
-});
-
-app.post('/api/portrait', requireAuth, uploadFlat.single('portrait'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No image received' });
-  res.json({ url: `/portraits/${req.file.filename}` });
 });
 
 app.post('/api/portrait/:charId', requireAuth, uploadChar.single('portrait'), (req, res) => {

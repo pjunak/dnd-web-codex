@@ -38,7 +38,7 @@ export const EditTemplates = (() => {
   // Each type defines: label, allowed target type, allowed directions.
   // Directions: 'from' = this char → target, 'to' = target → this char, 'both' = bidirectional.
   const REL_CONFIG = {
-    commands:    { label: 'velí',          target: 'character', dirs: ['from'] },
+    commands:    { label: 'velí',          target: 'character', dirs: ['from', 'to'] },
     ally:        { label: 'spojenec',      target: 'character', dirs: ['from','to','both'] },
     enemy:       { label: 'nepřítel',      target: 'character', dirs: ['from','to','both'] },
     mission:     { label: 'mise',          target: 'location',  dirs: ['from'] },

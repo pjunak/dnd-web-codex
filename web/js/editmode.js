@@ -108,16 +108,16 @@ export const EditMode = (() => {
     if (!file) return;
     try {
       _toast("Nahrávám obrázek…");
-      // Pass the character ID so the server stores the portrait under
-      // data/portraits/{charId}/portrait.ext (overwrites old file automatically).
-      // For new characters (uid === "new") no charId is known yet — use flat upload.
-      const charId = (uid && uid !== "new") ? uid : null;
-      const url       = await Store.uploadPortrait(file, charId);
-      const bustedUrl = url + '?v=' + Date.now();
-      const preview   = document.getElementById("ep-preview-" + uid);
-      const hidden    = document.getElementById("ep-data-" + uid);
-      if (preview) preview.innerHTML = `<img src="${bustedUrl}" style="width:100%;height:100%;object-fit:cover;object-position:top">`;
-      if (hidden)  hidden.value = bustedUrl;
+      // Always upload to a subfolder: data/portraits/{charId}/portrait.ext
+      // New characters use "_new" as a temporary charId; the server migrates
+      // the file to the real subfolder when the character is first saved.
+      const charId = (uid && uid !== "new") ? uid : "_new";
+      const url    = await Store.uploadPortrait(file, charId);
+      const preview = document.getElementById("ep-preview-" + uid);
+      const hidden  = document.getElementById("ep-data-" + uid);
+      // Show with cache-buster, but store the clean URL (no ?v=) in data
+      if (preview) preview.innerHTML = `<img src="${url}?v=${Date.now()}" style="width:100%;height:100%;object-fit:cover;object-position:top">`;
+      if (hidden)  hidden.value = url;
       _toast("Obrázek nahrán ✓");
     } catch(e) {
       _toast("Chyba při nahrávání obrázku", false);
@@ -154,11 +154,23 @@ export const EditMode = (() => {
       ? (Store.getCharacters().find(c => c.id === originalId) || {})
       : {};
 
-    // If the portrait was replaced, delete the old file from the server
-    const newPortrait = document.getElementById(`ep-data-${uid}`)?.value || "";
-    const oldPortrait = existing.portrait || "";
-    if (oldPortrait && oldPortrait !== newPortrait && oldPortrait.startsWith('/portraits/')) {
-      Store.deletePortrait(oldPortrait);
+    // Resolve portrait URL: strip any ?v= cache-busters (display-only, never stored),
+    // and remap the _new temp subfolder to the real charId now that we know it.
+    let portrait = (document.getElementById(`ep-data-${uid}`)?.value || "").split('?')[0];
+    if (portrait.startsWith('/portraits/_new/')) {
+      const ext = portrait.substring(portrait.lastIndexOf('.'));
+      portrait = `/portraits/${newId}/portrait${ext}`;
+      // Server will physically move _new/ → newId/ when it processes the PATCH
+    }
+
+    // Delete old portrait only when moving to a genuinely different location.
+    // Same-folder replacements (e.g. PNG→JPG in the same charId subfolder) are
+    // cleaned up server-side during upload, so no extra delete is needed here.
+    const oldPortrait = (existing.portrait || "").split('?')[0];
+    if (oldPortrait && oldPortrait !== portrait && oldPortrait.startsWith('/portraits/')) {
+      const oldSegment = oldPortrait.replace('/portraits/', '').split('/')[0];
+      const newSegment = portrait.replace('/portraits/', '').split('/')[0];
+      if (oldSegment !== newSegment) Store.deletePortrait(oldPortrait);
     }
 
     const ok = Store.saveCharacter({
@@ -171,7 +183,7 @@ export const EditMode = (() => {
       status:      document.getElementById(`ef-status-${uid}`)?.value              || "alive",
       knowledge:   parseInt(document.getElementById(`ef-knowledge-${uid}`)?.value) || 3,
       description: document.getElementById(`ef-desc-${uid}`)?.value.trim()         || "",
-      portrait:    document.getElementById(`ep-data-${uid}`)?.value                || "",
+      portrait,
       known:       _dynVals(`dyn-known-${uid}`),
       unknown:     _dynVals(`dyn-unknown-${uid}`),
     });

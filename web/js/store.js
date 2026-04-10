@@ -88,13 +88,12 @@ export const Store = (() => {
     return true;
   }
 
-  async function uploadPortrait(file, charId = null) {
+  async function uploadPortrait(file, charId) {
+    if (!charId) throw new Error('uploadPortrait: charId is required.');
     if (!_serverAvailable) throw new Error('Server není dostupný — nelze nahrát obrázek.');
     const form     = new FormData();
     form.append('portrait', file);
-    const endpoint = charId
-      ? `/api/portrait/${encodeURIComponent(charId)}`
-      : '/api/portrait';
+    const endpoint = `/api/portrait/${encodeURIComponent(charId)}`;
     const res = await fetch(endpoint, { method: 'POST', body: form });
     if (res.ok) return (await res.json()).url;
     if (res.status === 401) {
@@ -145,6 +144,8 @@ export const Store = (() => {
     }
     _data.characters    = _data.characters.filter(c => c.id !== id);
     _data.relationships = _data.relationships.filter(r => r.source !== id && r.target !== id);
+    _data.events        = (_data.events    || []).map(e => ({ ...e, characters: (e.characters    || []).filter(cid => cid !== id) }));
+    _data.mysteries     = (_data.mysteries || []).map(m => ({ ...m, characters: (m.characters    || []).filter(cid => cid !== id) }));
     return _sync('characters', 'delete', { id });
   }
 

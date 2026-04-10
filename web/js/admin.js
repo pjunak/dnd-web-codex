@@ -455,8 +455,9 @@ export const Admin = (() => {
     try {
       _toast('Nahrávám obrázek…');
       // Use the character's ID for per-character storage when editing an existing character.
-      // For new characters (_editId is null) fall back to a flat upload.
-      const url       = await Store.uploadPortrait(file, _editId || null);
+      // For new characters (_editId is null) use _new as a temp subfolder; the server
+      // migrates _new/ → {charId}/ automatically when the character is saved.
+      const url       = await Store.uploadPortrait(file, _editId || '_new');
       const bustedUrl = url + '?v=' + Date.now();
       _el('portrait-data').value = bustedUrl;
       const prev = _el('portrait-preview-img');
@@ -552,12 +553,17 @@ export const Admin = (() => {
       locationRoles: locRoles,
     };
 
-    // If the portrait was replaced, delete the old file from the server
-    const oldChar     = _editId ? Store.getCharacter(_editId) : null;
-    const oldPortrait = oldChar?.portrait || '';
-    const newPortrait = char.portrait || '';
+    // If the portrait moved to a genuinely different subfolder, delete the old one.
+    // Strip ?v= cache-busters and compare subfolder segments only (PNG→JPG in the
+    // same charId subfolder is handled server-side during upload, not here).
+    const oldChar      = _editId ? Store.getCharacter(_editId) : null;
+    const oldPortrait  = (oldChar?.portrait || '').split('?')[0];
+    const newPortrait  = (char.portrait     || '').split('?')[0];
+    char.portrait      = newPortrait || null;
     if (oldPortrait && oldPortrait !== newPortrait && oldPortrait.startsWith('/portraits/')) {
-      Store.deletePortrait(oldPortrait);
+      const oldSeg = oldPortrait.replace('/portraits/', '').split('/')[0];
+      const newSeg = newPortrait.replace('/portraits/', '').split('/')[0];
+      if (oldSeg !== newSeg) Store.deletePortrait(oldPortrait);
     }
 
     const ok = Store.saveCharacter(char);
