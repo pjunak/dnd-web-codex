@@ -47,14 +47,16 @@
 .w-cb-badge { margin-right: 0.35rem; }
 
 .w-cb-pop {
-  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  position: absolute; top: calc(100% + 4px); left: 0;
   background: #1a1714;
   border: 1px solid rgba(212, 184, 122, 0.45);
   border-radius: 4px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
   z-index: 1000;
   max-height: 280px; display: flex; flex-direction: column;
-  min-width: 220px;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(520px, 90vw);
 }
 .w-cb-pop[hidden] { display: none; }
 .w-cb-search {
@@ -69,11 +71,25 @@
   padding: 0.42rem 0.7rem;
   cursor: pointer;
   font-size: 0.92rem;
+  min-width: 0;
 }
 .w-cb-item:hover, .w-cb-item.is-active { background: rgba(212, 184, 122, 0.15); }
 .w-cb-item.is-selected { background: rgba(212, 184, 122, 0.22); }
-.w-cb-item .w-cb-lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.w-cb-sub { color: rgba(232, 222, 196, 0.55); font-size: 0.82rem; margin-left: auto; }
+.w-cb-item .w-cb-lbl {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  min-width: 0;
+}
+.w-cb-sub {
+  color: rgba(232, 222, 196, 0.55);
+  font-size: 0.82rem;
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .w-cb-empty-row { padding: 0.7rem; color: rgba(232, 222, 196, 0.5); font-style: italic; text-align: center; }
 
 /* ── MultiSelect ─────────────────────────────────────────────── */
