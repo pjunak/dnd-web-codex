@@ -77,7 +77,7 @@
   border-color: rgba(212,184,122,0.25) !important;
 }
 
-/* Pin icon */
+/* Pin icon — solid affiliation fill + universal rim + drop shadow */
 .sc-pin {
   display: flex;
   align-items: center;
@@ -85,12 +85,14 @@
   border-radius: 4px;
   cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  /* 1px dark rim separates pin from any map color; soft shadow lifts it */
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.55);
 }
-.sc-pin:hover { transform: scale(1.25); box-shadow: 0 4px 12px rgba(0,0,0,0.7); }
-.sc-pin-visited { box-shadow: 0 0 0 2px #4CAF50, 0 2px 6px rgba(0,0,0,0.5); }
-.sc-pin-enemy   { box-shadow: 0 0 0 2px #E53935, 0 2px 6px rgba(0,0,0,0.5); }
-.sc-pin-fog     { opacity: 0.45; filter: grayscale(0.7); }
+.sc-pin:hover {
+  transform: scale(1.25);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.5), 0 4px 12px rgba(0,0,0,0.7);
+  z-index: 1000;
+}
 
 /* Side panel */
 .sc-panel {

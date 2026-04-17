@@ -23,11 +23,14 @@ export const WorldMap = (() => {
     custom:     { icon: '📌', label: 'Vlastní',        color: '#8A5CC8' },
   };
 
+  // Affiliation-based marker colors. Solid fill so pins stand out on the map.
+  // `fg` is the emoji/icon color for contrast against `bg`. `labelColor` is
+  // used on dark UI surfaces (side panel meta, legend dot).
   const PIN_STATUSES = {
-    known:     { label: 'Známé',         ring: '#D4B87A' },
-    visited:   { label: 'Navštívené',    ring: '#4CAF50' },
-    enemy:     { label: 'Nepřátelské',   ring: '#E53935' },
-    fog:       { label: 'Neprozkoumaný', ring: '#555'   },
+    visited: { label: 'Spřátelené',  bg: '#2E7D32', fg: '#ffffff', labelColor: '#4CAF50' },
+    enemy:   { label: 'Nepřátelské', bg: '#C62828', fg: '#ffffff', labelColor: '#EF5350' },
+    fog:     { label: 'Neznámé',     bg: '#37474F', fg: '#E8E0C4', labelColor: '#90A4AE' },
+    known:   { label: 'Neutrální',   bg: '#F5F0E4', fg: '#1a1410', labelColor: '#F0E6C8' },
   };
 
   // ── Pin priority (1 = always visible, 3 = needs high zoom) ────
@@ -230,14 +233,22 @@ export const WorldMap = (() => {
     const pt   = PIN_TYPES[pin.type]  || PIN_TYPES.custom;
     const ps   = PIN_STATUSES[pin.status] || PIN_STATUSES.known;
     const size = pin.type === 'major_city' ? 28 : 22;
+    // Dark-bg pins use a subtle dark shadow around the emoji, light-bg pins
+    // use a light shadow. Many emoji are polychrome and ignore `color`; the
+    // shadow gives them a readable outline either way.
+    const lightBg    = pin.status === 'known';
+    const textShadow = lightBg
+      ? '0 0 2px rgba(255,255,255,0.9)'
+      : '0 0 2px rgba(0,0,0,0.65)';
     return L.divIcon({
       className: '',
       iconSize:  [size, size],
       iconAnchor:[size/2, size/2],
       html: `<div class="sc-pin sc-pin-${pin.status}" style="
         width:${size}px;height:${size}px;
-        background:${pt.color}22;
-        border:2px solid ${ps.ring};
+        background:${ps.bg};
+        color:${ps.fg};
+        text-shadow:${textShadow};
         font-size:${size*0.55}px;
       " title="${_esc(pin.name)}">${pt.icon}</div>`,
     });
@@ -316,23 +327,27 @@ export const WorldMap = (() => {
     if (!pts.length) { zoomFitAll(); return; }
     _map.fitBounds(L.latLngBounds(pts).pad(0.25), { animate: true });
   }
+  // Fit bounds around pins linked to EVERY event that has a `sitting` number,
+  // i.e. everything that has happened in play so far. `maxZoom` caps how close
+  // Leaflet may zoom when the bounds collapse to a single pin.
   function zoomCurrentSitting() {
     if (!_map) return;
     const events = Store.getEvents();
-    const sittings = events.map(e => e.sitting).filter(s => typeof s === 'number');
-    if (!sittings.length) { zoomFitAll(); return; }
-    const lastSitting = Math.max(...sittings);
     const locs = new Set();
     for (const e of events) {
-      if (e.sitting === lastSitting) {
-        for (const lid of e.locations || []) locs.add(lid);
-      }
+      if (typeof e.sitting !== 'number') continue;
+      for (const lid of e.locations || []) locs.add(lid);
     }
+    if (!locs.size) { zoomFitAll(); return; }
     const pts = Store.getMapPins()
       .filter(p => p.locationId && locs.has(p.locationId))
       .map(p => _toLL(p.x, p.y));
     if (!pts.length) { zoomFitAll(); return; }
-    _map.fitBounds(L.latLngBounds(pts).pad(0.4), { animate: true });
+    const capZoom = Math.min(0, _map.getMaxZoom());
+    _map.fitBounds(L.latLngBounds(pts).pad(0.4), {
+      animate: true,
+      maxZoom: capZoom,
+    });
   }
 
   function _openPinPanel(pinId) {
@@ -349,7 +364,7 @@ export const WorldMap = (() => {
           <span class="sc-pin-icon">${pt.icon}</span>
           <div>
             <div class="sc-pin-name">${_esc(pin.name)}</div>
-            <div class="sc-pin-meta">${pt.label} · <span style="color:${ps.ring}">${ps.label}</span></div>
+            <div class="sc-pin-meta">${pt.label} · <span style="color:${ps.labelColor}">${ps.label}</span></div>
           </div>
         </div>
         ${pin.notes ? `<div class="sc-pin-notes">${_esc(pin.notes)}</div>` : ''}
@@ -587,10 +602,10 @@ export const WorldMap = (() => {
     leg.innerHTML = `
       <div class="legend-title">Zoom: ${priText}</div>
       ${hint}
-      <div class="legend-title" style="margin-top:0.6rem">Status</div>
+      <div class="legend-title" style="margin-top:0.6rem">Příslušnost</div>
       ${Object.entries(PIN_STATUSES).map(([, v]) =>
         `<div class="legend-item">
-          <div class="legend-dot" style="background:${v.ring}"></div>
+          <div class="legend-dot" style="background:${v.bg};box-shadow:0 0 0 1px rgba(0,0,0,0.4)"></div>
           ${v.label}
         </div>`
       ).join('')}
