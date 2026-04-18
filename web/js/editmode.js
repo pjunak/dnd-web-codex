@@ -8,6 +8,7 @@
 import { Store } from './store.js';
 import { EditTemplates } from './edit_templates.js';
 import { Widgets } from './widgets/widgets.js';
+import { PIN_TYPES } from './map.js';
 
 export const EditMode = (() => {
 
@@ -382,11 +383,26 @@ export const EditMode = (() => {
     const existing = originalId ? (Store.getLocation(originalId) || {}) : {};
     const parentId = document.getElementById(`lf-parent-${uid}`)?.value.trim() || "";
     const localMap = document.getElementById(`lf-localmap-${uid}`)?.value.trim() || "";
+
+    // Typ dropdown stores a PIN_TYPES key; derive the human label into
+    // l.type for wiki search/display back-compat. Empty = unset.
+    const pinTypeKey = document.getElementById(`lf-type-${uid}`)?.value || "";
+    const pinTypeDef = pinTypeKey ? PIN_TYPES[pinTypeKey] : null;
+    const typeLabel  = pinTypeDef ? pinTypeDef.label : "";
+
+    // Status dropdown: "__custom__" switches to the inline input, anything
+    // else is the selected value.
+    let statusVal = document.getElementById(`lf-status-${uid}`)?.value || "";
+    if (statusVal === "__custom__") {
+      statusVal = document.getElementById(`lf-status-custom-${uid}`)?.value.trim() || "";
+    }
+
     Store.saveLocation({
       ...existing,
       id: newId, name,
-      type:        document.getElementById(`lf-type-${uid}`)?.value.trim()   || "",
-      status:      document.getElementById(`lf-status-${uid}`)?.value.trim() || "",
+      pinType:     pinTypeKey || existing.pinType || undefined,
+      type:        typeLabel,
+      status:      statusVal,
       description: document.getElementById(`lf-desc-${uid}`)?.value.trim()   || "",
       notes:       document.getElementById(`lf-notes-${uid}`)?.value.trim()  || "",
       parentId:    parentId || undefined,
@@ -395,6 +411,22 @@ export const EditMode = (() => {
     _runAfterSave('location', newId);
     _toast("✓ Místo uloženo");
     _navigateOrRefresh(`#/misto/${newId}`);
+  }
+
+  // ── Location status dropdown ──────────────────────────────────
+  // Toggles the inline custom-status input when the user picks
+  // "✎ Vlastní…" from the dropdown.
+  function onLocationStatusChange(uid) {
+    const sel    = document.getElementById(`lf-status-${uid}`);
+    const custom = document.getElementById(`lf-status-custom-${uid}`);
+    if (!sel || !custom) return;
+    if (sel.value === '__custom__') {
+      custom.style.display = '';
+      custom.focus();
+    } else {
+      custom.style.display = 'none';
+      custom.value = '';
+    }
   }
 
   // ── Local map upload ──────────────────────────────────────────
@@ -610,7 +642,7 @@ export const EditMode = (() => {
     addRankChain, addRankRow,
     saveCharacter, deleteCharacter,
     addRelationship, updateRelationship, deleteRelationship, relTypeChanged,
-    saveLocation, deleteLocation, uploadLocalMap,
+    saveLocation, deleteLocation, uploadLocalMap, onLocationStatusChange,
     saveEvent, deleteEvent, addPartyToEvent,
     saveMystery, deleteMystery,
     saveFaction, deleteFaction,

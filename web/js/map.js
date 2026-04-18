@@ -341,6 +341,33 @@ export const WorldMap = (() => {
       _pendingPinId = null;
       setTimeout(() => zoomToPin(id), 50);
     }
+
+    // Re-arm placement intent if it survived a re-render (SSE flush,
+    // hashchange re-nav, etc.). The click handler clears the intent on
+    // success, so this is idempotent after placement.
+    _armForCurrentTarget();
+  }
+
+  // Reads the current _placeForLocId / _placeForEventId intent and puts
+  // the map back into add-mode with the right hint. Safe to call whenever
+  // the map is (re)initialised — no-op if nothing is armed.
+  function _armForCurrentTarget() {
+    if (!_map) return;
+    if (_placeForLocId) {
+      const loc = Store.getLocation(_placeForLocId);
+      if (!loc) { _placeForLocId = null; return; }
+      _setAddMode(true);
+      const hint = document.querySelector('.sc-hint');
+      if (hint) hint.textContent = `Klikni na mapu pro umístění: ${loc.name}`;
+      return;
+    }
+    if (_placeForEventId) {
+      const ev = Store.getEvent(_placeForEventId);
+      if (!ev) { _placeForEventId = null; return; }
+      _setAddMode(true);
+      const hint = document.querySelector('.sc-hint');
+      if (hint) hint.textContent = `Klikni na mapu pro umístění události: ${ev.name}`;
+    }
   }
 
   function _showMapError(container) {
@@ -750,19 +777,19 @@ export const WorldMap = (() => {
   function startPlacingEventPin(eventId) {
     const ev = Store.getEvent(eventId);
     if (!ev) return;
+    _placeForLocId = null;
     _placeForEventId = eventId;
     const targetParent = ev.mapParentId || null;
-    const arm = () => {
-      _setAddMode(true);
-      const hint = document.querySelector('.sc-hint');
-      if (hint) hint.textContent = `Klikni na mapu pro umístění události: ${ev.name}`;
-    };
     const alreadyOnMap = !!_map && targetParent === _currentParentId;
-    if (alreadyOnMap) { arm(); return; }
+    if (alreadyOnMap) { _armForCurrentTarget(); return; }
     if (window.location.hash !== '#/mapa/svet') window.location.hash = '#/mapa/svet';
+    // Defer until the route change (and any parent-map render) finishes.
+    // _doInit will call _armForCurrentTarget once the map is ready, so the
+    // intent survives SSE-driven re-renders that may happen concurrently.
     setTimeout(() => {
-      if (targetParent) render(targetParent);
-      setTimeout(arm, 120);
+      if (targetParent && targetParent !== _currentParentId) render(targetParent);
+      else if (!_map) _initLeaflet();
+      else _armForCurrentTarget();
     }, 0);
   }
 
@@ -808,19 +835,18 @@ export const WorldMap = (() => {
     const loc = Store.getLocation(locId);
     if (!loc) return;
     const targetParent = loc.parentId || null;
+    _placeForEventId = null;
     _placeForLocId = locId;
-    const arm = () => {
-      _setAddMode(true);
-      const hint = document.querySelector('.sc-hint');
-      if (hint) hint.textContent = `Klikni na mapu pro umístění: ${loc.name}`;
-    };
     const alreadyOnMap = !!_map && targetParent === _currentParentId;
-    if (alreadyOnMap) { arm(); return; }
+    if (alreadyOnMap) { _armForCurrentTarget(); return; }
     if (window.location.hash !== '#/mapa/svet') window.location.hash = '#/mapa/svet';
     // Defer until the route change (and any parent-map render) finishes.
+    // _doInit will call _armForCurrentTarget once the map is ready, so the
+    // intent survives SSE-driven re-renders that may happen concurrently.
     setTimeout(() => {
-      if (targetParent) render(targetParent);
-      setTimeout(arm, 120);
+      if (targetParent && targetParent !== _currentParentId) render(targetParent);
+      else if (!_map) _initLeaflet();
+      else _armForCurrentTarget();
     }, 0);
   }
 

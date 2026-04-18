@@ -284,15 +284,27 @@ export const EditTemplates = (() => {
       <div class="edit-hint" style="margin-top:0.25rem">Postava může být vždy jen na jednom místě — přidání sem ji odebere z předchozího místa.</div>`
       : `<div class="edit-hint">Uložte místo, pak přidejte přítomné postavy.</div>`;
 
-    // Type datalist: PIN_TYPES labels + existing location types.
-    const existingTypes = [...new Set(Store.getLocations().map(x => x.type).filter(Boolean))];
-    const pinTypeLabels = Object.values(PIN_TYPES).map(p => p.label);
-    const typeOpts = [...new Set([...pinTypeLabels, ...existingTypes])]
-      .map(t => `<option value="${_esc(t)}">`).join('');
+    // Typ dropdown: PIN_TYPES entries with their icons, plus "custom"
+    // fallback. Current pinType wins; if only the legacy text `type` is
+    // set, try matching it to a PIN_TYPES label.
+    let selectedPinType = l.pinType || '';
+    if (!selectedPinType && l.type) {
+      const match = Object.entries(PIN_TYPES).find(([, v]) => v.label === l.type);
+      if (match) selectedPinType = match[0];
+    }
+    const typeOpts = `<option value="" ${!selectedPinType?'selected':''}>— neurčeno —</option>` +
+      Object.entries(PIN_TYPES)
+        .map(([k, v]) => `<option value="${_esc(k)}" ${selectedPinType===k?'selected':''}>${v.icon} ${_esc(v.label)}</option>`)
+        .join('');
 
-    // Status datalist: existing non-empty statuses.
+    // Status dropdown: existing non-empty statuses across all Locations,
+    // plus a blank option. New status values can still be introduced by
+    // editing an existing one in-place (next user picks it up here).
     const existingStatuses = [...new Set(Store.getLocations().map(x => x.status).filter(Boolean))];
-    const statusOpts = existingStatuses.map(s => `<option value="${_esc(s)}">`).join('');
+    if (l.status && !existingStatuses.includes(l.status)) existingStatuses.push(l.status);
+    const statusOpts = `<option value="" ${!l.status?'selected':''}>— neurčeno —</option>` +
+      existingStatuses.map(s => `<option value="${_esc(s)}" ${l.status===s?'selected':''}>${_esc(s)}</option>`).join('') +
+      `<option value="__custom__">✎ Vlastní…</option>`;
 
     // Subplace hierarchy: parent picker excludes self (and could exclude
     // descendants but a deep cycle check belongs in save).
@@ -343,16 +355,15 @@ export const EditTemplates = (() => {
           </div>
           <div class="edit-field">
             <label class="edit-label">Typ</label>
-            <input class="edit-input" id="lf-type-${uid}" value="${_esc(l.type)}"
-              list="lf-type-opts-${uid}" placeholder="Město, Pevnost, Tábor…" autocomplete="off">
-            <datalist id="lf-type-opts-${uid}">${typeOpts}</datalist>
+            <select class="edit-input" id="lf-type-${uid}">${typeOpts}</select>
           </div>
         </div>
         <div class="edit-field">
           <label class="edit-label">Status</label>
-          <input class="edit-input" id="lf-status-${uid}" value="${_esc(l.status)}"
-            list="lf-status-opts-${uid}" placeholder="Pod kontrolou kultu, Neutrální…" autocomplete="off">
-          <datalist id="lf-status-opts-${uid}">${statusOpts}</datalist>
+          <select class="edit-input" id="lf-status-${uid}"
+            onchange="EditMode.onLocationStatusChange('${uid}')">${statusOpts}</select>
+          <input class="edit-input" id="lf-status-custom-${uid}" type="text"
+            placeholder="Zadej vlastní status…" style="margin-top:0.4rem;display:none">
         </div>
         <div class="edit-field">
           <label class="edit-label">Popis</label>
