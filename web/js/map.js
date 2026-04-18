@@ -1,6 +1,23 @@
 import { Store } from './store.js';
 import { Widgets } from './widgets/widgets.js';
 
+export const PIN_TYPES = {
+  major_city: { icon: '🏙', label: 'Velké město',   color: '#D4A017' },
+  city:       { icon: '🏛', label: 'Město',          color: '#C0A060' },
+  town:       { icon: '🏘', label: 'Městečko',       color: '#A0B080' },
+  village:    { icon: '🏠', label: 'Vesnice',        color: '#80A070' },
+  fortress:   { icon: '🏰', label: 'Pevnost',        color: '#9090A0' },
+  camp:       { icon: '⛺', label: 'Tábor',           color: '#B88040' },
+  dungeon:    { icon: '⚠', label: 'Dungeon',         color: '#A06040' },
+  ruin:       { icon: '🏚', label: 'Ruina',          color: '#888070' },
+  shrine:     { icon: '⛩', label: 'Svatyně',        color: '#80A0B0' },
+  landmark:   { icon: '🗿', label: 'Bod zájmu',      color: '#80A0B0' },
+  curiosity:  { icon: '✨', label: 'Zajímavost',     color: '#C8A040' },
+  region:     { icon: '🗺', label: 'Oblast',         color: '#708090' },
+  enemy:      { icon: '💀', label: 'Nepřátelské',    color: '#B04040' },
+  custom:     { icon: '📌', label: 'Vlastní',        color: '#8A5CC8' },
+};
+
 export const WorldMap = (() => {
 
   const LS_IMG_KEY  = 'world_map_image_url';
@@ -9,23 +26,6 @@ export const WorldMap = (() => {
   function _getImgUrl() {
     return localStorage.getItem(LS_IMG_KEY) || DEFAULT_IMG;
   }
-
-  const PIN_TYPES = {
-    major_city: { icon: '🏙', label: 'Velké město',   color: '#D4A017' },
-    city:       { icon: '🏛', label: 'Město',          color: '#C0A060' },
-    town:       { icon: '🏘', label: 'Městečko',       color: '#A0B080' },
-    village:    { icon: '🏠', label: 'Vesnice',        color: '#80A070' },
-    fortress:   { icon: '🏰', label: 'Pevnost',        color: '#9090A0' },
-    camp:       { icon: '⛺', label: 'Tábor',           color: '#B88040' },
-    dungeon:    { icon: '⚠', label: 'Dungeon',         color: '#A06040' },
-    ruin:       { icon: '🏚', label: 'Ruina',          color: '#888070' },
-    shrine:     { icon: '⛩', label: 'Svatyně',        color: '#80A0B0' },
-    landmark:   { icon: '🗿', label: 'Bod zájmu',      color: '#80A0B0' },
-    curiosity:  { icon: '✨', label: 'Zajímavost',     color: '#C8A040' },
-    region:     { icon: '🗺', label: 'Oblast',         color: '#708090' },
-    enemy:      { icon: '💀', label: 'Nepřátelské',    color: '#B04040' },
-    custom:     { icon: '📌', label: 'Vlastní',        color: '#8A5CC8' },
-  };
 
   // Affiliation-based marker colors. Solid fill so pins stand out on the map.
   // `fg` is the emoji/icon color for contrast against `bg`. `labelColor` is
@@ -75,6 +75,12 @@ export const WorldMap = (() => {
   // Current map context. null = the world map. Otherwise, a location id
   // whose `localMap` image is shown and whose subplaces appear as pins.
   let _currentParentId = null;
+
+  // When navigating into the map from elsewhere (e.g. the "Najít na mapě"
+  // button on a wiki page), we can't fly to the pin until the map has
+  // finished its async image-preload init. Stash the target here; _doInit
+  // consumes it once the map is ready.
+  let _pendingPinId = null;
 
   // Pin shape derived from a Location. Map code below operates on this
   // pin-like view; writes go through Store.saveLocation.
@@ -269,6 +275,14 @@ export const WorldMap = (() => {
       _enforceFitZoom();
     });
     _resizeObserver.observe(container);
+
+    // Consume any pending "fly to pin" request scheduled before the map
+    // was ready (e.g. WorldMap.showPin triggered during a hash navigation).
+    if (_pendingPinId) {
+      const id = _pendingPinId;
+      _pendingPinId = null;
+      setTimeout(() => zoomToPin(id), 50);
+    }
   }
 
   function _showMapError(container) {
@@ -795,6 +809,27 @@ export const WorldMap = (() => {
     _openPinPanel(pinId);
   }
 
+  // Public entry point used from wiki pages. Navigates into the correct
+  // map context (world or parent local map), then flies to the pin once
+  // Leaflet has finished its async init. If the map is already up, this
+  // is equivalent to zoomToPin.
+  function showPin(pinId) {
+    const loc = Store.getLocation(pinId);
+    if (!loc || typeof loc.x !== 'number') return;
+    const targetParent = loc.parentId || null;
+    const alreadyOnMap = !!_map && targetParent === _currentParentId;
+    if (alreadyOnMap) { zoomToPin(pinId); return; }
+    _pendingPinId = pinId;
+    if (targetParent) {
+      // Sub-map: render will be called when someone reaches the map page.
+      // Route to world map first (canonical hash), then switch parents.
+      window.location.hash = '#/mapa/svet';
+      setTimeout(() => render(targetParent), 0);
+    } else {
+      window.location.hash = '#/mapa/svet';
+    }
+  }
+
   // Switch the map view to a parent location's local map (parent.localMap
   // image, sub-pins overlaid). No-ops if the parent has no localMap set.
   function openLocalMap(parentId) {
@@ -814,7 +849,7 @@ export const WorldMap = (() => {
     openPinPanel, savePin, deletePin,
     showSettings, closeSettings, applySettings, handleMapFileUpload,
     zoomFitAll, zoomMajorCities, zoomCurrentSitting,
-    onSearchInput, jumpToFirstMatch, zoomToPin,
+    onSearchInput, jumpToFirstMatch, zoomToPin, showPin,
     openLocalMap,
   };
 })();

@@ -178,16 +178,12 @@ export const EditMode = (() => {
     _navigateOrRefresh('#/postava/new');
   }
 
-  /** "+ Postava zde" — create a new character and auto-link it to a location. */
+  /** "+ Postava zde" — create a new character and auto-link it to a location.
+   *  character.location is the canonical source of truth (a character can
+   *  only be in one place at a time). */
   function startNewCharacterInLocation(locId) {
-    _prefill.character = {};
-    _afterSave.character = (newCharId) => {
-      const loc = Store.getLocation(locId);
-      if (!loc) return;
-      const chars = [...(loc.characters || [])];
-      if (!chars.includes(newCharId)) chars.push(newCharId);
-      Store.saveLocation({ ...loc, characters: chars });
-    };
+    _prefill.character = { location: locId };
+    _afterSave.character = null;
     _navigateOrRefresh('#/postava/new');
   }
 
@@ -381,6 +377,8 @@ export const EditMode = (() => {
     // Preserve map-only fields (x, y, pinType, mapStatus, priority, mapNotes)
     // that this form doesn't expose. Only the wiki form would clobber them
     // otherwise; the map's own pin form remains the place to edit them.
+    // Note: location.characters is no longer written here — character.location
+    // is the canonical source of truth, managed via the MultiSelect picker.
     const existing = originalId ? (Store.getLocation(originalId) || {}) : {};
     const parentId = document.getElementById(`lf-parent-${uid}`)?.value.trim() || "";
     const localMap = document.getElementById(`lf-localmap-${uid}`)?.value.trim() || "";
@@ -391,7 +389,6 @@ export const EditMode = (() => {
       status:      document.getElementById(`lf-status-${uid}`)?.value.trim() || "",
       description: document.getElementById(`lf-desc-${uid}`)?.value.trim()   || "",
       notes:       document.getElementById(`lf-notes-${uid}`)?.value.trim()  || "",
-      characters:  _checkVals(`lf-chars-${uid}`),
       parentId:    parentId || undefined,
       localMap:    localMap || undefined,
     });
@@ -399,6 +396,50 @@ export const EditMode = (() => {
     _toast("✓ Místo uloženo");
     _navigateOrRefresh(`#/misto/${newId}`);
   }
+
+  // ── Local map upload ──────────────────────────────────────────
+  async function uploadLocalMap(locId, file, inputId) {
+    if (!file || !locId) return;
+    try {
+      _toast("Nahrávám mapu…");
+      const url = await Store.uploadLocalMap(file, locId);
+      const input = document.getElementById(inputId);
+      if (input) input.value = url;
+      _toast("Mapa nahrána ✓");
+    } catch (e) {
+      _toast("Chyba při nahrávání mapy", false);
+      console.error(e);
+    }
+  }
+
+  // ── MultiSelect → character.location sync ─────────────────────
+  // The location editor mounts a MultiSelect with data-loc-id. Each
+  // change diffs added/removed and updates character.location. This
+  // enforces "character can only be in one place at a time":
+  // adding a character here moves it from its previous location.
+  document.addEventListener('w-ms-change', (ev) => {
+    const el = ev.target;
+    if (!el || !el.dataset) return;
+    const locId = el.dataset.locId;
+    if (!locId) return;
+    const newIds = new Set(ev.detail?.value || []);
+    const prevIds = new Set((el.dataset.msValue || '').split(',').map(s => s.trim()).filter(Boolean));
+    // Added: set their .location to locId
+    newIds.forEach(cid => {
+      if (prevIds.has(cid)) return;
+      const c = Store.getCharacter(cid);
+      if (!c) return;
+      Store.saveCharacter({ ...c, location: locId });
+    });
+    // Removed: clear their .location (only if it still points here)
+    prevIds.forEach(cid => {
+      if (newIds.has(cid)) return;
+      const c = Store.getCharacter(cid);
+      if (!c) return;
+      if (c.location === locId) Store.saveCharacter({ ...c, location: '' });
+    });
+    el.dataset.msValue = [...newIds].join(',');
+  });
 
   function deleteLocation(id) {
     if (!confirm("Opravdu smazat místo?")) return;
@@ -555,7 +596,7 @@ export const EditMode = (() => {
     addRankChain, addRankRow,
     saveCharacter, deleteCharacter,
     addRelationship, updateRelationship, deleteRelationship, relTypeChanged,
-    saveLocation, deleteLocation,
+    saveLocation, deleteLocation, uploadLocalMap,
     saveEvent, deleteEvent,
     saveMystery, deleteMystery,
     saveFaction, deleteFaction,

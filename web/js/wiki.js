@@ -7,6 +7,7 @@
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
 import { norm, esc } from './utils.js';
+import { PIN_TYPES } from './map.js';
 
 export const Wiki = (() => {
 
@@ -471,25 +472,30 @@ export const Wiki = (() => {
 
   function _mistaGridHtml() {
     const locs = _mistaApply();
+    const newCard = EditMode.isActive() ? `
+      <a class="loc-card loc-card-new" href="#/misto/new" style="text-decoration:none">
+        <div class="loc-card-new-icon">＋</div>
+        <div class="loc-card-new-label">Nové místo</div>
+      </a>` : "";
     if (locs.length === 0) {
-      return `<div class="list-empty">Žádné místo neodpovídá hledání.</div>`;
+      return `<div class="list-empty">Žádné místo neodpovídá hledání.</div>${newCard}`;
     }
     return locs.map(l => {
+      const pt = PIN_TYPES[l.pinType] || PIN_TYPES.custom || { icon: '📍', color: '#888' };
+      const typeLabel = pt.label || l.type || '';
+      const region = l.region ? `<div class="loc-card-sub">${esc(l.region)}</div>` : '';
       const editBtn = EditMode.isActive()
-        ? `<span class="list-edit-btn" title="Upravit">✏</span>` : "";
-      const desc = l.description ? `${l.description.substring(0, 120)}…` : "";
-      return `<a class="list-item" href="#/misto/${l.id}" style="text-decoration:none;position:relative">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start">
-          <div class="list-item-name">📍 ${l.name}</div>
-          <div style="display:flex;align-items:center;gap:0.5rem">
-            <span class="badge" style="background:rgba(255,255,255,0.07);color:var(--text-muted)">${l.type || ''}</span>
-            ${editBtn}
-          </div>
+        ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
+      return `<a class="loc-card" href="#/misto/${l.id}" style="text-decoration:none;position:relative">
+        ${editBtn}
+        <div class="loc-card-icon" style="color:${pt.color}">${pt.icon}</div>
+        <div class="loc-card-body">
+          <div class="loc-card-name">${esc(l.name)}</div>
+          <div class="loc-card-type">${esc(typeLabel)}</div>
+          ${region}
         </div>
-        <div class="list-item-sub">${l.status || ''}</div>
-        <div class="list-item-desc">${desc}</div>
       </a>`;
-    }).join("");
+    }).join("") + newCard;
   }
 
   function renderLocationList() {
@@ -512,7 +518,7 @@ export const Wiki = (() => {
         ['status',    'Stav'],
         ['knowledge', 'Znalost (nejvíc)'],
       ])}
-      <div class="list-items" id="wl-mista-grid">${_mistaGridHtml()}</div>
+      <div class="loc-grid" id="wl-mista-grid">${_mistaGridHtml()}</div>
     `;
   }
 
@@ -546,11 +552,10 @@ export const Wiki = (() => {
     if (!l) return `<p>Místo '${id}' nenalezeno.</p>`;
     if (EditMode.isActive()) return EditMode.renderLocationEditor(l);
 
-    const chars = (l.characters || []).map(cid => {
-      const c = Store.getCharacter(cid);
-      const factions = Store.getFactions();
-      return c ? `<a class="relation-chip" href="#/postava/${cid}">${factions[c.faction]?.badge || "👤"} ${c.name}</a>` : "";
-    }).join("");
+    const factions = Store.getFactions();
+    const chars = Store.getCharactersInLocation(id).map(c =>
+      `<a class="relation-chip" href="#/postava/${c.id}">${factions[c.faction]?.badge || "👤"} ${c.name}</a>`
+    ).join("");
 
     // Hierarchy: ancestor breadcrumb + sub-locations.
     const ancestors = Store.getAncestorLocations(id).reverse();
@@ -576,11 +581,8 @@ export const Wiki = (() => {
     // World-map / local-map entry points.
     const mapButtons = [];
     if (typeof l.x === 'number' && typeof l.y === 'number') {
-      // Determine which map to open: the parent's local map if any, else world.
-      const targetParent = l.parentId || '';
-      const route = targetParent ? `#/mapa/svet` : `#/mapa/svet`;
       mapButtons.push(
-        `<button class="inline-create-btn" onclick="WorldMap.zoomToPin('${l.id}');location.hash='${route}'">🧭 Najít na mapě</button>`
+        `<button class="inline-create-btn" onclick="WorldMap.showPin('${l.id}')">🧭 Najít na mapě</button>`
       );
     }
     if (l.localMap) {

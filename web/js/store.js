@@ -203,6 +203,20 @@ export const Store = (() => {
     throw new Error('Nahrání portrétu selhalo.');
   }
 
+  async function uploadLocalMap(file, locId) {
+    if (!locId) throw new Error('uploadLocalMap: locId is required.');
+    if (!_serverAvailable) throw new Error('Server není dostupný — nelze nahrát mapu.');
+    const form = new FormData();
+    form.append('localmap', file);
+    const res = await fetch(`/api/localmap/${encodeURIComponent(locId)}`, { method: 'POST', body: form });
+    if (res.ok) return (await res.json()).url;
+    if (res.status === 401) {
+      window.dispatchEvent(new CustomEvent('store:auth-failed'));
+      throw new Error('Neznámé nebo chybějící heslo.');
+    }
+    throw new Error('Nahrání mapy selhalo.');
+  }
+
   function deletePortrait(url) {
     if (!_serverAvailable || !url || !url.startsWith('/portraits/')) return;
     const identifier = url.slice('/portraits/'.length).split('/')[0];
@@ -509,7 +523,7 @@ export const Store = (() => {
 
   return {
     load, init,
-    uploadPortrait, deletePortrait,
+    uploadPortrait, deletePortrait, uploadLocalMap,
     getCharacters, getRelationships, getLocations, getEvents, getMysteries,
     getMapPins, getFactions, getFaction, getStatusMap,
     getCharacter, getLocation, getEvent, getMystery,

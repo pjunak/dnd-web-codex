@@ -11,10 +11,13 @@ const PORT = process.env.PORT || 3000;
 
 const DATA_DIR      = path.join(__dirname, 'data');
 const PORTRAITS_DIR = path.join(__dirname, 'data', 'portraits');
+const MAPS_DIR      = path.join(__dirname, 'data', 'maps');
+const LOCAL_MAPS_DIR = path.join(MAPS_DIR, 'local');
 const WEB_DIR       = path.join(__dirname, 'web');
 
-fs.mkdirSync(DATA_DIR,      { recursive: true });
-fs.mkdirSync(PORTRAITS_DIR, { recursive: true });
+fs.mkdirSync(DATA_DIR,       { recursive: true });
+fs.mkdirSync(PORTRAITS_DIR,  { recursive: true });
+fs.mkdirSync(LOCAL_MAPS_DIR, { recursive: true });
 
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
@@ -48,6 +51,20 @@ const charStorage = multer.diskStorage({
 });
 
 const uploadChar = multer({ storage: charStorage, limits: { fileSize: 20 * 1024 * 1024 }, fileFilter: _imageFilter });
+
+const localMapStorage = multer.diskStorage({
+  destination: (req, _file, cb) => {
+    const locId = (req.params.locId || '').replace(/[^a-z0-9_\-]/gi, '_').substring(0, 60);
+    const dir   = path.join(LOCAL_MAPS_DIR, locId);
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+    cb(null, 'map' + ext);
+  },
+});
+const uploadLocalMap = multer({ storage: localMapStorage, limits: { fileSize: 20 * 1024 * 1024 }, fileFilter: _imageFilter });
 
 function _dataHash() {
   try {
@@ -313,6 +330,19 @@ app.post('/api/portrait/:charId', requireAuth, uploadChar.single('portrait'), (r
       .forEach(f => fs.unlinkSync(path.join(charDir, f)));
   } catch (_) {}
   res.json({ url: `/portraits/${charId}/${req.file.filename}` });
+});
+
+app.post('/api/localmap/:locId', requireAuth, uploadLocalMap.single('localmap'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image received' });
+  const locId  = (req.params.locId || '').replace(/[^a-z0-9_\-]/gi, '_').substring(0, 60);
+  const locDir = path.join(LOCAL_MAPS_DIR, locId);
+  const newFile = req.file.filename;
+  try {
+    fs.readdirSync(locDir)
+      .filter(f => f !== newFile && /^map\./i.test(f))
+      .forEach(f => fs.unlinkSync(path.join(locDir, f)));
+  } catch (_) {}
+  res.json({ url: `/maps/local/${locId}/${req.file.filename}` });
 });
 
 app.delete('/api/portrait/:identifier', requireAuth, (req, res) => {

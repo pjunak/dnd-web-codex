@@ -1,4 +1,5 @@
 import { Store } from './store.js';
+import { PIN_TYPES } from './map.js';
 
 export const EditTemplates = (() => {
 
@@ -264,17 +265,34 @@ export const EditTemplates = (() => {
   function renderLocationEditor(l) {
     const isNew = !l || !l.id;
     if (isNew) {
-      const defaults = { id:"", name:"", type:"", status:"", description:"", notes:"", characters:[],
+      const defaults = { id:"", name:"", type:"", status:"", description:"", notes:"",
                          parentId:"", localMap:"" };
       l = { ...defaults, ...(l || {}) };
     }
     const uid = l.id || "new_loc";
-    const allChars = Store.getCharacters();
-    const charChecks = _sortedChars(allChars).map(c => `
-      <label class="edit-check">
-        <input type="checkbox" value="${c.id}" ${(l.characters||[]).includes(c.id)?"checked":""}>
-        ${_charBadge(c)}${_esc(c.name)}
-      </label>`).join("");
+
+    // Characters present here: driven by character.location (single source of truth).
+    const presentChars = l.id ? Store.getCharactersInLocation(l.id) : [];
+    const presentIds   = presentChars.map(c => c.id).join(',');
+    const charsPicker = l.id ? `<div class="ms-mount"
+      id="lf-chars-${uid}"
+      data-ms-source="character"
+      data-ms-value="${_esc(presentIds)}"
+      data-ms-placeholder="Hledej postavu a přidej…"
+      data-ms-on-create="character"
+      data-loc-id="${_esc(l.id)}"></div>
+      <div class="edit-hint" style="margin-top:0.25rem">Postava může být vždy jen na jednom místě — přidání sem ji odebere z předchozího místa.</div>`
+      : `<div class="edit-hint">Uložte místo, pak přidejte přítomné postavy.</div>`;
+
+    // Type datalist: PIN_TYPES labels + existing location types.
+    const existingTypes = [...new Set(Store.getLocations().map(x => x.type).filter(Boolean))];
+    const pinTypeLabels = Object.values(PIN_TYPES).map(p => p.label);
+    const typeOpts = [...new Set([...pinTypeLabels, ...existingTypes])]
+      .map(t => `<option value="${_esc(t)}">`).join('');
+
+    // Status datalist: existing non-empty statuses.
+    const existingStatuses = [...new Set(Store.getLocations().map(x => x.status).filter(Boolean))];
+    const statusOpts = existingStatuses.map(s => `<option value="${_esc(s)}">`).join('');
 
     // Subplace hierarchy: parent picker excludes self (and could exclude
     // descendants but a deep cycle check belongs in save).
@@ -291,6 +309,10 @@ export const EditTemplates = (() => {
     const mapBadge = onMap
       ? `<span class="badge" style="background:rgba(46,125,50,0.18);color:#a5d6a7">📍 Na mapě</span>`
       : `<span class="badge" style="background:rgba(255,255,255,0.07);color:var(--text-muted)">Není na mapě</span>`;
+
+    const localMapPreview = l.localMap
+      ? `<div class="lf-localmap-preview"><img src="${_esc(l.localMap)}" alt=""></div>`
+      : '';
 
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
@@ -309,12 +331,16 @@ export const EditTemplates = (() => {
           </div>
           <div class="edit-field">
             <label class="edit-label">Typ</label>
-            <input class="edit-input" id="lf-type-${uid}" value="${_esc(l.type)}" placeholder="Město, Pevnost, Tábor…">
+            <input class="edit-input" id="lf-type-${uid}" value="${_esc(l.type)}"
+              list="lf-type-opts-${uid}" placeholder="Město, Pevnost, Tábor…" autocomplete="off">
+            <datalist id="lf-type-opts-${uid}">${typeOpts}</datalist>
           </div>
         </div>
         <div class="edit-field">
           <label class="edit-label">Status</label>
-          <input class="edit-input" id="lf-status-${uid}" value="${_esc(l.status)}" placeholder="Pod kontrolou kultu, Neutrální…">
+          <input class="edit-input" id="lf-status-${uid}" value="${_esc(l.status)}"
+            list="lf-status-opts-${uid}" placeholder="Pod kontrolou kultu, Neutrální…" autocomplete="off">
+          <datalist id="lf-status-opts-${uid}">${statusOpts}</datalist>
         </div>
         <div class="edit-field">
           <label class="edit-label">Popis</label>
@@ -333,15 +359,23 @@ export const EditTemplates = (() => {
             <div class="edit-hint" style="margin-top:0.25rem">Např. dungeon uvnitř města. Toto místo se objeví na mapě rodiče.</div>
           </div>
           <div class="edit-field">
-            <label class="edit-label">URL vlastní mapy (volitelné — pro dílčí mapu tohoto místa)</label>
-            <input class="edit-input" id="lf-localmap-${uid}" value="${_esc(l.localMap||'')}" placeholder="/maps/local/dungeon.jpg nebo data:image/...">
+            <label class="edit-label">Vlastní mapa (volitelné — pro dílčí mapu tohoto místa)</label>
+            <div class="lf-localmap-row">
+              <input class="edit-input" id="lf-localmap-${uid}" value="${_esc(l.localMap||'')}" placeholder="/maps/local/... nebo nahraj obrázek →">
+              ${!isNew ? `<label class="edit-upload-btn" title="Nahrát obrázek">
+                📤 Nahrát
+                <input type="file" accept="image/*" style="display:none"
+                  onchange="EditMode.uploadLocalMap('${l.id}', this.files[0], 'lf-localmap-${uid}')">
+              </label>` : `<span class="edit-hint" style="align-self:center">(uložte místo, pak nahrajte)</span>`}
+            </div>
+            ${localMapPreview}
             <div class="edit-hint" style="margin-top:0.25rem">Když je vyplněno, na stránce místa se objeví tlačítko 🗺 Místní mapa, kde se zobrazí podřízená místa.</div>
           </div>
         </div>
 
         <div class="edit-section">
           <div class="edit-section-title">Přítomné postavy</div>
-          <div class="edit-checks" id="lf-chars-${uid}">${charChecks}</div>
+          ${charsPicker}
         </div>
         <div class="edit-bottom-actions">
           <button class="edit-save-btn" onclick="EditMode.saveLocation('${l.id}')">💾 Uložit místo</button>

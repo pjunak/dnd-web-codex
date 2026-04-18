@@ -262,6 +262,29 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
   transition: border-color 0.15s, color 0.15s;
 }
 .edit-upload-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
+
+/* Local map upload row: URL input + upload button side-by-side */
+.lf-localmap-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+.lf-localmap-row .edit-input { flex: 1; }
+.lf-localmap-row .edit-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  padding: 0.4rem 0.75rem;
+}
+.lf-localmap-preview {
+  margin-top: 0.5rem;
+  max-width: 320px;
+  border: 1px solid rgba(200,160,64,0.2);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+.lf-localmap-preview img { display: block; width: 100%; height: auto; max-height: 180px; object-fit: contain; }
 .edit-remove-portrait-btn {
   background: none;
   border: none;
