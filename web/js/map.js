@@ -2,20 +2,34 @@ import { Store } from './store.js';
 import { Widgets } from './widgets/widgets.js';
 
 export const PIN_TYPES = {
-  major_city: { icon: '🏙', label: 'Velké město',   color: '#D4A017' },
-  city:       { icon: '🏛', label: 'Město',          color: '#C0A060' },
-  town:       { icon: '🏘', label: 'Městečko',       color: '#A0B080' },
-  village:    { icon: '🏠', label: 'Vesnice',        color: '#80A070' },
-  fortress:   { icon: '🏰', label: 'Pevnost',        color: '#9090A0' },
-  camp:       { icon: '⛺', label: 'Tábor',           color: '#B88040' },
-  dungeon:    { icon: '⚠', label: 'Dungeon',         color: '#A06040' },
-  ruin:       { icon: '🏚', label: 'Ruina',          color: '#888070' },
-  shrine:     { icon: '⛩', label: 'Svatyně',        color: '#80A0B0' },
-  landmark:   { icon: '🗿', label: 'Bod zájmu',      color: '#80A0B0' },
-  curiosity:  { icon: '✨', label: 'Zajímavost',     color: '#C8A040' },
-  region:     { icon: '🗺', label: 'Oblast',         color: '#708090' },
-  enemy:      { icon: '💀', label: 'Nepřátelské',    color: '#B04040' },
-  custom:     { icon: '📌', label: 'Vlastní',        color: '#8A5CC8' },
+  major_city:  { icon: '🏙',  label: 'Velké město',  color: '#D4A017' },
+  city:        { icon: '🏛',  label: 'Město',         color: '#C0A060' },
+  town:        { icon: '🏘',  label: 'Městečko',      color: '#A0B080' },
+  village:     { icon: '🏠',  label: 'Vesnice',       color: '#80A070' },
+  fortress:    { icon: '🏰',  label: 'Pevnost',       color: '#9090A0' },
+  castle:      { icon: '🏯',  label: 'Hrad',          color: '#9A9AA8' },
+  tower:       { icon: '🗼',  label: 'Věž',           color: '#A8A098' },
+  temple:      { icon: '🛕',  label: 'Chrám',         color: '#C0A088' },
+  shrine:      { icon: '⛩',  label: 'Svatyně',       color: '#80A0B0' },
+  tavern:      { icon: '🍺',  label: 'Hospoda',       color: '#C89050' },
+  market:      { icon: '🏪',  label: 'Trh',           color: '#C8A050' },
+  academy:     { icon: '🎓',  label: 'Akademie',      color: '#A890C0' },
+  port:        { icon: '⚓',  label: 'Přístav',       color: '#6090A0' },
+  bridge:      { icon: '🌉',  label: 'Most',          color: '#909090' },
+  camp:        { icon: '⛺',  label: 'Tábor',         color: '#B88040' },
+  dungeon:     { icon: '⚠',   label: 'Dungeon',       color: '#A06040' },
+  cave:        { icon: '🕳',  label: 'Jeskyně',       color: '#706050' },
+  ruin:        { icon: '🏚',  label: 'Ruina',         color: '#888070' },
+  graveyard:   { icon: '🪦',  label: 'Hřbitov',       color: '#808080' },
+  battlefield: { icon: '⚔',   label: 'Bojiště',       color: '#A04040' },
+  landmark:    { icon: '🗿',  label: 'Bod zájmu',     color: '#80A0B0' },
+  forest:      { icon: '🌲',  label: 'Les',           color: '#4A7A4A' },
+  mountain:    { icon: '⛰',   label: 'Hora',          color: '#8A7A6A' },
+  lake:        { icon: '🏞',  label: 'Jezero',        color: '#5A90B0' },
+  curiosity:   { icon: '✨',  label: 'Zajímavost',    color: '#C8A040' },
+  region:      { icon: '🗺',  label: 'Oblast',        color: '#708090' },
+  enemy:       { icon: '💀',  label: 'Nepřátelské',   color: '#B04040' },
+  custom:      { icon: '📌',  label: 'Vlastní',       color: '#8A5CC8' },
 };
 
 export const WorldMap = (() => {
@@ -41,10 +55,12 @@ export const WorldMap = (() => {
   // Derive from pin.priority if set, else infer from pin.type so existing
   // data needs no migration.
   const PRIORITY_BY_TYPE = {
-    major_city: 1, fortress: 1,
-    city: 2, town: 2, region: 2,
-    village: 3, dungeon: 3, landmark: 3, shrine: 3, ruin: 3,
-    camp: 3, curiosity: 3, enemy: 3, custom: 3,
+    major_city: 1, fortress: 1, castle: 1,
+    city: 2, town: 2, region: 2, port: 2, academy: 2,
+    village: 3, dungeon: 3, landmark: 3, shrine: 3, temple: 3, ruin: 3,
+    camp: 3, curiosity: 3, enemy: 3, custom: 3, tower: 3, tavern: 3,
+    market: 3, cave: 3, graveyard: 3, battlefield: 3, forest: 3,
+    mountain: 3, lake: 3, bridge: 3,
   };
   function _priorityOf(pin) {
     if (pin.priority === 1 || pin.priority === 2 || pin.priority === 3) return pin.priority;

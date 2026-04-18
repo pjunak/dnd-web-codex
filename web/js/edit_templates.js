@@ -310,6 +310,18 @@ export const EditTemplates = (() => {
       ? `<span class="badge" style="background:rgba(46,125,50,0.18);color:#a5d6a7">📍 Na mapě</span>`
       : `<span class="badge" style="background:rgba(255,255,255,0.07);color:var(--text-muted)">Není na mapě</span>`;
 
+    const mapControls = isNew
+      ? `<div class="edit-hint">Pin lze umístit po prvním uložení místa.</div>`
+      : onMap
+        ? `<div class="inline-create-row">
+             <button type="button" class="inline-create-btn" onclick="WorldMap.showPin('${l.id}')">🧭 Zobrazit na mapě</button>
+             <button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingPin('${l.id}')">📍 Přemístit</button>
+             <button type="button" class="edit-delete-btn" onclick="WorldMap.deletePin('${l.id}')">🗑 Odebrat z mapy</button>
+           </div>`
+        : `<div class="inline-create-row">
+             <button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingPin('${l.id}')">📍 Umístit na mapu</button>
+           </div>`;
+
     const localMapPreview = l.localMap
       ? `<div class="lf-localmap-preview"><img src="${_esc(l.localMap)}" alt=""></div>`
       : '';
@@ -353,6 +365,10 @@ export const EditTemplates = (() => {
 
         <div class="edit-section">
           <div class="edit-section-title">Hierarchie a mapa <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">${mapBadge}</span></div>
+          <div class="edit-field">
+            <label class="edit-label">Pin na mapě</label>
+            ${mapControls}
+          </div>
           <div class="edit-field">
             <label class="edit-label">Rodičovské místo (volitelné — pro dílčí mapy)</label>
             ${parentMount}
