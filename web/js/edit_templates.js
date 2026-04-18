@@ -388,12 +388,10 @@ export const EditTemplates = (() => {
   function renderEventEditor(e) {
     const isNew = !e || !e.id;
     if (isNew) {
-      const defaults = { id:"", name:"", order:99, sitting:null, short:"", description:"", characters:[], locations:[], consequence:"" };
+      const defaults = { id:"", name:"", order:99, sitting:null, short:"", description:"", characters:[], locations:[] };
       e = { ...defaults, ...(e || {}) };
     }
     const uid = e.id || "new_ev";
-    const allLocs  = Store.getLocations();
-    const allEvs   = Store.getEvents();
 
     const charsValue = (e.characters || []).join(',');
     const locsValue  = (e.locations  || []).join(',');
@@ -407,10 +405,6 @@ export const EditTemplates = (() => {
       data-ms-value="${_esc(locsValue)}"
       data-ms-placeholder="Hledat místo…"
       data-ms-on-create="location"></div>`;
-    const consOpts = `<option value="">— žádná —</option>` +
-      allEvs.filter(ev => ev.id !== e.id).map(ev =>
-        `<option value="${ev.id}" ${e.consequence===ev.id?"selected":""}>${ev.order}. ${_esc(ev.name)}</option>`
-      ).join("");
 
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
@@ -446,7 +440,10 @@ export const EditTemplates = (() => {
         </div>
         <div class="edit-row-2">
           <div class="edit-section" style="margin-top:0">
-            <div class="edit-section-title">Zúčastněné postavy</div>
+            <div class="edit-section-title">Zúčastněné postavy
+              <button type="button" class="inline-create-btn" style="margin-left:.5rem"
+                onclick="EditMode.addPartyToEvent('evf-chars-${uid}')">🛡 + Naše parta</button>
+            </div>
             ${charPicker}
           </div>
           <div class="edit-section" style="margin-top:0">
@@ -455,8 +452,16 @@ export const EditTemplates = (() => {
           </div>
         </div>
         <div class="edit-field">
-          <label class="edit-label">Navazující událost</label>
-          <select class="edit-select" id="evf-cons-${uid}">${consOpts}</select>
+          <label class="edit-label">Pin události na mapě</label>
+          ${isNew
+            ? `<div class="edit-hint">Pin lze umístit po prvním uložení události.</div>`
+            : (typeof e.mapX === 'number' && typeof e.mapY === 'number')
+              ? `<div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+                  <button type="button" class="inline-create-btn" onclick="WorldMap.showEventPin('${e.id}')">🧭 Zobrazit pin</button>
+                  <button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingEventPin('${e.id}')">📍 Přemístit</button>
+                  <button type="button" class="edit-delete-btn" onclick="WorldMap.clearEventPin('${e.id}')">🗑 Odebrat pin</button>
+                </div>`
+              : `<button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingEventPin('${e.id}')">📍 Umístit pin na mapu</button>`}
         </div>
         <div class="edit-bottom-actions">
           <button class="edit-save-btn" onclick="EditMode.saveEvent('${e.id}')">💾 Uložit událost</button>

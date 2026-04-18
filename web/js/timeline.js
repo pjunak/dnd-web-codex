@@ -6,6 +6,12 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Store } from './store.js';
+import { EditMode } from './editmode.js';
+
+// Flat render order of events. Populated on every render() and consumed by
+// the drag-drop handler to rebuild sittings/orders after a reorder.
+let _flatList = [];
+let _draggingId = null;
 
 export const Timeline = (() => {
 
@@ -35,6 +41,28 @@ export const Timeline = (() => {
       if (c && c.faction && c.faction !== 'neutral') return _factionColor(c.faction);
     }
     return '#8B6914';
+  }
+
+  // Recompute `sitting` + `order` across all events after a drag.
+  // Given the ordered list (post-drop, with the moved event in its new slot
+  // and its sitting already overridden), re-number `order` as 1,2,3 per
+  // sitting group. Every event whose sitting or order actually changed is
+  // persisted via Store.saveEvent.
+  function _commitDragReorder(orderedList) {
+    const perSitting = new Map();
+    const writes = [];
+    orderedList.forEach(e => {
+      const key = e.sitting ?? '__past__';
+      const idx = (perSitting.get(key) ?? 0) + 1;
+      perSitting.set(key, idx);
+      const existing = Store.getEvent(e.id);
+      if (!existing) return;
+      if (existing.sitting !== e.sitting || existing.order !== idx) {
+        writes.push({ ...existing, sitting: e.sitting, order: idx });
+      }
+    });
+    writes.forEach(w => Store.saveEvent(w));
+    return writes.length > 0;
   }
 
   // Build the HTML for one event cloud card
@@ -111,13 +139,82 @@ export const Timeline = (() => {
     wrapper.innerHTML = _cloudHTML(e);
     canvas.appendChild(wrapper);
 
-    // Click to navigate
-    wrapper.querySelector('.tl-cloud').addEventListener('click', () => {
+    const cloud = wrapper.querySelector('.tl-cloud');
+
+    // Click to navigate. Suppressed if a drag just finished (the drop
+    // target also receives a synthetic click on some browsers).
+    cloud.addEventListener('click', () => {
+      if (cloud.dataset.tlJustDragged === '1') {
+        delete cloud.dataset.tlJustDragged;
+        return;
+      }
       window.location.hash = `#/udalost/${e.id}`;
     });
-    wrapper.querySelector('.tl-cloud').addEventListener('keydown', ev => {
+    cloud.addEventListener('keydown', ev => {
       if (ev.key === 'Enter' || ev.key === ' ') window.location.hash = `#/udalost/${e.id}`;
     });
+
+    // Drag-drop reorder (edit mode only).
+    if (EditMode.isActive()) {
+      cloud.setAttribute('draggable', 'true');
+      cloud.addEventListener('dragstart', ev => {
+        _draggingId = e.id;
+        cloud.classList.add('tl-drag-src');
+        // Some browsers need data on the transfer to start a drag.
+        try { ev.dataTransfer.setData('text/plain', e.id); } catch {}
+        ev.dataTransfer.effectAllowed = 'move';
+      });
+      cloud.addEventListener('dragend', () => {
+        cloud.classList.remove('tl-drag-src');
+        wrapper.classList.remove('tl-drop-left', 'tl-drop-right');
+        _draggingId = null;
+        cloud.dataset.tlJustDragged = '1';
+        setTimeout(() => { delete cloud.dataset.tlJustDragged; }, 0);
+      });
+      wrapper.addEventListener('dragover', ev => {
+        if (!_draggingId || _draggingId === e.id) return;
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = 'move';
+        const rect = wrapper.getBoundingClientRect();
+        const before = (ev.clientX - rect.left) < rect.width / 2;
+        wrapper.classList.toggle('tl-drop-left', before);
+        wrapper.classList.toggle('tl-drop-right', !before);
+      });
+      wrapper.addEventListener('dragleave', () => {
+        wrapper.classList.remove('tl-drop-left', 'tl-drop-right');
+      });
+      wrapper.addEventListener('drop', ev => {
+        ev.preventDefault();
+        wrapper.classList.remove('tl-drop-left', 'tl-drop-right');
+        const srcId = _draggingId;
+        _draggingId = null;
+        if (!srcId || srcId === e.id) return;
+        const rect = wrapper.getBoundingClientRect();
+        const before = (ev.clientX - rect.left) < rect.width / 2;
+        _handleDrop(srcId, e.id, before);
+      });
+    }
+  }
+
+  // Rebuild the flat list with `srcId` inserted before/after `tgtId` and the
+  // dragged event's sitting overridden to the target's. Then persist and
+  // re-render.
+  function _handleDrop(srcId, tgtId, insertBefore) {
+    const list = _flatList.slice();
+    const srcIdx = list.findIndex(x => x.id === srcId);
+    const tgtIdx = list.findIndex(x => x.id === tgtId);
+    if (srcIdx < 0 || tgtIdx < 0) return;
+    const moved = { ...list[srcIdx], sitting: list[tgtIdx].sitting };
+    list.splice(srcIdx, 1);
+    const reTgtIdx = list.findIndex(x => x.id === tgtId);
+    const insertAt = insertBefore ? reTgtIdx : reTgtIdx + 1;
+    list.splice(insertAt, 0, moved);
+    if (_commitDragReorder(list)) {
+      // Store.saveEvent schedules a write; SSE will re-render, but do a
+      // local refresh too so the DM sees the reorder immediately without
+      // waiting for the round-trip.
+      render();
+    }
   }
 
   // ── Place a session divider ───────────────────────────────────
@@ -153,6 +250,7 @@ export const Timeline = (() => {
 
     const pastEvents = allEvents.filter(e => !e.sitting);
     const maxSitting = allEvents.reduce((m, e) => Math.max(m, e.sitting ?? 0), 0);
+    _flatList = allEvents;
 
     // Build the shell HTML
     document.getElementById('main-content').style.display = '';
@@ -160,7 +258,8 @@ export const Timeline = (() => {
       <div class="tl-shell">
         <div class="tl-toolbar">
           <div class="tl-title">⏳ Časová Osa</div>
-          <span class="tl-hint">← Skroluj vodorovně · Klik na oblak = detail události</span>
+          <span class="tl-hint">← Skroluj vodorovně · Klik na oblak = detail události${EditMode.isActive() ? ' · Táhni oblak = přeskládat' : ''}</span>
+          ${EditMode.isActive() ? `<button class="tl-add-btn" onclick="EditMode.startNewEvent()">＋ Nová událost</button>` : ''}
         </div>
         <div class="tl-viewport" id="tl-viewport">
           <div class="tl-canvas" id="tl-canvas" style="position:relative;height:${CANVAS_H}px">

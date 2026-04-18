@@ -43,6 +43,27 @@
   color: var(--text-muted);
   margin-left: auto;
 }
+.tl-add-btn {
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  padding: 0.3rem 0.7rem;
+  background: transparent;
+  color: var(--accent-gold);
+  border: 1px solid rgba(200,160,64,0.5);
+  border-radius: 4px;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: background 0.15s, border-color 0.15s;
+}
+.tl-add-btn:hover {
+  background: rgba(200,160,64,0.12);
+  border-color: var(--accent-gold);
+}
+.tl-cloud.tl-drag-src { opacity: 0.4; }
+.tl-cloud-wrapper.tl-drop-left { box-shadow: -4px 0 0 var(--accent-gold); }
+.tl-cloud-wrapper.tl-drop-right { box-shadow: 4px 0 0 var(--accent-gold); }
+body.edit-mode .tl-cloud { cursor: grab; }
+body.edit-mode .tl-cloud:active { cursor: grabbing; }
 
 /* Scrollable viewport */
 .tl-viewport {

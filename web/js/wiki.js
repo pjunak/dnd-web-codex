@@ -645,9 +645,6 @@ export const Wiki = (() => {
       return l ? `<a class="relation-chip" href="#/misto/${lid}">📍 ${l.name}</a>` : "";
     }).join("");
 
-    const events = Store.getEvents();
-    const next = e.consequence ? events.find(ev => ev.id === e.consequence) : null;
-
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
       <div class="location-article">
@@ -658,8 +655,6 @@ export const Wiki = (() => {
         <p>${e.description}</p>
         ${chars ? `<div class="char-section"><div class="char-section-title">Zúčastněné Postavy</div><div class="relation-chips">${chars}</div></div>` : ""}
         ${locs  ? `<div class="char-section"><div class="char-section-title">Místa</div><div class="relation-chips">${locs}</div></div>` : ""}
-        ${next  ? `<div class="char-section"><div class="char-section-title">Navazuje</div><div class="relation-chips">
-          <a class="relation-chip" href="#/udalost/${next.id}">→ ${next.name}</a></div></div>` : ""}
       </div>
     `;
   }

@@ -69,6 +69,10 @@ export const WorldMap = (() => {
   // location id instead of opening the new-pin form. Used by the wiki's
   // "📍 Umístit na mapu" button.
   let _placeForLocId = null;
+  // When set, the next map click in add-mode writes map coordinates onto
+  // the event (mapX/mapY + mapParentId) so sessions can be pinned to the
+  // map even when the party didn't visit a named Location.
+  let _placeForEventId = null;
   let _hiddenCount = 0;  // tracked by _applyPinVisibility for the legend
   let _modeObserver    = null;
   let _resizeObserver  = null;
@@ -271,6 +275,23 @@ export const WorldMap = (() => {
         Store.saveLocation(patch);
         _refreshPin(loc.id);
         setTimeout(() => zoomToPin(loc.id), 50);
+        return;
+      }
+      // Placing an event-only pin — stash coordinates on the event itself.
+      if (_placeForEventId) {
+        const ev = Store.getEvent(_placeForEventId);
+        _placeForEventId = null;
+        _setAddMode(false);
+        if (!ev) return;
+        Store.saveEvent({ ...ev, mapX: frac.x, mapY: frac.y, mapParentId: _currentParentId });
+        // Make sure the newly-placed pin is actually visible.
+        if (!_eventPathsVisible) {
+          _eventPathsVisible = true;
+          const btn = document.getElementById('sc-event-btn');
+          if (btn) btn.classList.add('active');
+        }
+        _drawEventPaths();
+        _renderLegend();
         return;
       }
       _openNewPin(frac.x, frac.y);
@@ -608,20 +629,41 @@ export const WorldMap = (() => {
 
     const pins = _pinsForCurrent();
 
-    const eventPoints = events.map(e => {
-      const primaryLocId = (e.locations || [])[0];
-      if (!primaryLocId) return null;
-      const pin = pins.find(p => p.locationId === primaryLocId);
-      if (!pin) return null;
-      return { event: e, pin, ll: _toLL(pin.x, pin.y) };
-    }).filter(Boolean);
+    // An event appears on the map in three ways, in priority order:
+    //   1. An explicit event pin (e.mapX/mapY) on the current sub-map.
+    //   2. Otherwise, all Locations listed in e.locations[] that are
+    //      placed on the current sub-map (multi-location events show
+    //      once per visited pin).
+    //   3. Legacy fallback: the single primary location.
+    const eventPoints = [];
+    events.forEach(e => {
+      const hasOwnPin = typeof e.mapX === 'number' && typeof e.mapY === 'number';
+      const ownParent = hasOwnPin ? (e.mapParentId || null) : null;
+      if (hasOwnPin && ownParent === _currentParentId) {
+        eventPoints.push({ event: e, ll: _toLL(e.mapX, e.mapY), eventPin: true });
+        return;
+      }
+      const locIds = (e.locations || []);
+      const hits = locIds
+        .map(lid => pins.find(p => p.locationId === lid))
+        .filter(Boolean);
+      if (hits.length) {
+        hits.forEach(pin => eventPoints.push({ event: e, pin, ll: _toLL(pin.x, pin.y) }));
+      }
+    });
 
     if (!eventPoints.length) return;
 
+    // Connect consecutive event points with a dashed line. A stable key
+    // identifies the rendered spot (event-pin id, location-pin id, or raw
+    // coords) so we skip zero-length hops between identical spots.
+    const spotKey = p => p.eventPin ? `ev:${p.event.id}`
+                      : p.pin     ? `loc:${p.pin.id}`
+                      : `${p.ll.lat},${p.ll.lng}`;
     for (let i = 1; i < eventPoints.length; i++) {
       const prev = eventPoints[i - 1];
       const curr = eventPoints[i];
-      if (prev.pin.id === curr.pin.id) continue;
+      if (spotKey(prev) === spotKey(curr)) continue;
       const line = L.polyline([prev.ll, curr.ll], {
         color:      '#C8A040',
         weight:     2.5,
@@ -680,10 +722,67 @@ export const WorldMap = (() => {
 
   function toggleAddMode() {
     // Leaving add-mode (user cancelled) must also clear any pending
-    // "place this existing location" intent so the next add-click
+    // "place existing location / event" intent so the next add-click
     // creates a new pin as usual.
-    if (_addMode) _placeForLocId = null;
+    if (_addMode) { _placeForLocId = null; _placeForEventId = null; }
     _setAddMode(!_addMode);
+  }
+
+  // Arm the map so the next click writes mapX/mapY onto the given event.
+  // Used by the event editor's "📍 Umístit pin události" button so a
+  // session can be pinned to a spot on the map without creating a Location.
+  function startPlacingEventPin(eventId) {
+    const ev = Store.getEvent(eventId);
+    if (!ev) return;
+    _placeForEventId = eventId;
+    const targetParent = ev.mapParentId || null;
+    const arm = () => {
+      _setAddMode(true);
+      const hint = document.querySelector('.sc-hint');
+      if (hint) hint.textContent = `Klikni na mapu pro umístění události: ${ev.name}`;
+    };
+    const alreadyOnMap = !!_map && targetParent === _currentParentId;
+    if (alreadyOnMap) { arm(); return; }
+    if (window.location.hash !== '#/mapa/svet') window.location.hash = '#/mapa/svet';
+    setTimeout(() => {
+      if (targetParent) render(targetParent);
+      setTimeout(arm, 120);
+    }, 0);
+  }
+
+  // Navigate to the event pin's map context and fly to its position.
+  // Mirrors showPin/zoomToPin for Locations.
+  function showEventPin(eventId) {
+    const ev = Store.getEvent(eventId);
+    if (!ev || typeof ev.mapX !== 'number') return;
+    const targetParent = ev.mapParentId || null;
+    const fly = () => {
+      if (!_map) return;
+      _eventPathsVisible = true;
+      _drawEventPaths();
+      const btn = document.getElementById('sc-event-btn');
+      if (btn) btn.classList.add('active');
+      const ll = _toLL(ev.mapX, ev.mapY);
+      const capZoom = Math.min(0, _map.getMaxZoom());
+      _map.flyTo(ll, capZoom, { animate: true, duration: 0.6 });
+    };
+    const alreadyOnMap = !!_map && targetParent === _currentParentId;
+    if (alreadyOnMap) { fly(); return; }
+    if (window.location.hash !== '#/mapa/svet') window.location.hash = '#/mapa/svet';
+    setTimeout(() => {
+      if (targetParent) render(targetParent);
+      setTimeout(fly, 120);
+    }, 0);
+  }
+
+  // Strip a previously-placed event pin. Keeps the Event itself intact.
+  function clearEventPin(eventId) {
+    const ev = Store.getEvent(eventId);
+    if (!ev) return;
+    const patch = { ...ev };
+    delete patch.mapX; delete patch.mapY; delete patch.mapParentId;
+    Store.saveEvent(patch);
+    if (_eventPathsVisible) _drawEventPaths();
   }
 
   // Public entry-point for the wiki "📍 Umístit na mapu" button. Navigates
@@ -901,5 +1000,6 @@ export const WorldMap = (() => {
     zoomFitAll, zoomMajorCities, zoomCurrentSitting,
     onSearchInput, jumpToFirstMatch, zoomToPin, showPin,
     openLocalMap, startPlacingPin,
+    startPlacingEventPin, clearEventPin, showEventPin,
   };
 })();

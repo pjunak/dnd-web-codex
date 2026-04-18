@@ -482,7 +482,6 @@ export const EditMode = (() => {
       description: document.getElementById(`evf-desc-${uid}`)?.value.trim()      || "",
       characters:  _checkVals(`evf-chars-${uid}`),
       locations:   _checkVals(`evf-locs-${uid}`),
-      consequence: document.getElementById(`evf-cons-${uid}`)?.value             || "",
     });
     _runAfterSave('event', newId);
     _toast("✓ Událost uložena");
@@ -494,6 +493,21 @@ export const EditMode = (() => {
     Store.deleteEvent(id);
     _toast("Událost smazána");
     window.location.hash = "#/casova-osa";
+  }
+
+  // Merge all player-party characters into the given MultiSelect mount.
+  function addPartyToEvent(mountId) {
+    const el = document.getElementById(mountId);
+    if (!el || !el._multiselect) { _toast("Widget nepřipraven", false); return; }
+    const partyIds = Store.getCharacters()
+      .filter(c => c.faction === 'party')
+      .map(c => c.id);
+    if (!partyIds.length) { _toast("Frakce 'party' je prázdná", false); return; }
+    const current = el._multiselect.getValue();
+    const merged  = Array.from(new Set([...current, ...partyIds]));
+    const added   = merged.length - current.length;
+    el._multiselect.setValue(merged);
+    _toast(added ? `+ ${added} postav` : "Všichni už jsou přidáni");
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -597,7 +611,7 @@ export const EditMode = (() => {
     saveCharacter, deleteCharacter,
     addRelationship, updateRelationship, deleteRelationship, relTypeChanged,
     saveLocation, deleteLocation, uploadLocalMap,
-    saveEvent, deleteEvent,
+    saveEvent, deleteEvent, addPartyToEvent,
     saveMystery, deleteMystery,
     saveFaction, deleteFaction,
     renderCharacterEditor,

@@ -796,7 +796,6 @@ export const Admin = (() => {
     const maxOrder = Math.max(0, ...Store.getEvents().map(ev => ev.order));
     const allChars = Store.getCharacters();
     const allLocs  = Store.getLocations();
-    const allEvts  = Store.getEvents().filter(ev => ev.id !== id);
 
     el.innerHTML = `
       <div class="admin-form">
@@ -836,14 +835,6 @@ export const Admin = (() => {
           <label class="admin-label">Místa</label>
           <div class="admin-checks">${_multiSelect(allLocs, e?.locations||[], 'id', 'name')}</div>
         </div>
-        <div class="admin-field">
-          <label class="admin-label">Navazuje na (výsledek)</label>
-          <select class="admin-input" id="f-ev-consequence">
-            <option value="">— žádné —</option>
-            ${allEvts.map(ev => `<option value="${ev.id}" ${e?.consequence===ev.id?'selected':''}>${ev.name}</option>`).join('')}
-          </select>
-        </div>
-
         <div class="admin-actions">
           <button class="admin-btn ok" onclick="Admin.saveEvent()">💾 Uložit</button>
           ${id ? `<button class="admin-btn err" onclick="Admin.deleteEvent('${id}')">🗑 Smazat</button>` : ''}
@@ -883,7 +874,6 @@ export const Admin = (() => {
       description: _val('f-ev-desc'),
       characters:  charIds,
       locations:   locIds,
-      consequence: _val('f-ev-consequence') || null,
     });
     _toast(`${name} uložena ✓`);
     _renderList();

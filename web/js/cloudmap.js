@@ -1111,7 +1111,34 @@ export const CloudMap = (() => {
     });
   }
 
+  // Build a map of visible parallel-edge groups, keyed by the unordered
+  // node-pair. Each entry stores the ordered list of visible edge ids; the
+  // index within that list + its size drive perpendicular offset so multiple
+  // relations between the same two nodes fan out instead of overlapping.
+  function _buildParallelGroups() {
+    const groups = new Map();
+    _cy.edges().forEach(edge => {
+      if (edge.hasClass('cm-filter-hidden')) return;
+      const s = edge.source(), t = edge.target();
+      if (s.hasClass('cm-filter-hidden') || t.hasClass('cm-filter-hidden')) return;
+      const a = s.id(), b = t.id();
+      const key = a < b ? `${a}||${b}` : `${b}||${a}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(edge.id());
+    });
+    // Sort deterministically so layout is stable across renders.
+    groups.forEach(arr => arr.sort());
+    const info = {};
+    groups.forEach(arr => {
+      arr.forEach((eid, idx) => { info[eid] = { idx, count: arr.length }; });
+    });
+    return info;
+  }
+
   function _syncEdgeLabels() {
+    const PARALLEL_STEP = 18; // px separation between parallel edges
+    const parallelInfo = _buildParallelGroups();
+
     Object.entries(_edgeLabels).forEach(([eid, rec]) => {
       const { div, label, svgEls, markerId } = rec;
       const [line1, line2] = svgEls;
@@ -1144,14 +1171,30 @@ export const CloudMap = (() => {
       const udx = dx / len;
       const udy = dy / len;
 
+      // Perpendicular offset for parallel edges between the same two nodes.
+      // Direction is based on the sorted pair key, so flipping source/target
+      // across edges in the same group still produces consistent fan-out.
+      const pInfo = parallelInfo[eid] || { idx: 0, count: 1 };
+      let pOff = 0;
+      if (pInfo.count > 1) {
+        const base = (pInfo.idx - (pInfo.count - 1) / 2) * PARALLEL_STEP;
+        // Normalize perpendicular direction relative to the pair's canonical
+        // orientation (lower id → higher id) so siblings don't cancel out.
+        const aId = srcNode.id(), bId = tgtNode.id();
+        pOff = aId < bId ? base : -base;
+      }
+      const perpX = -udy * pOff;
+      const perpY =  udx * pOff;
+
       const srcRaw   = _nodeIntersect(srcNode, sp.x, sp.y,
                          srcNode.data('w') / 2, srcNode.data('h') / 2,  udx,  udy);
       const tgtRaw   = _nodeIntersect(tgtNode, tp.x, tp.y,
                          tgtNode.data('w') / 2, tgtNode.data('h') / 2, -udx, -udy);
 
-      // Inset endpoints so markers sit just outside the cloud boundary
-      const srcExit  = { x: srcRaw.x + udx * INSET_SRC, y: srcRaw.y + udy * INSET_SRC };
-      const tgtEntry = { x: tgtRaw.x - udx * INSET_TGT, y: tgtRaw.y - udy * INSET_TGT };
+      // Inset endpoints so markers sit just outside the cloud boundary,
+      // and apply the parallel-edge perpendicular shift.
+      const srcExit  = { x: srcRaw.x + udx * INSET_SRC + perpX, y: srcRaw.y + udy * INSET_SRC + perpY };
+      const tgtEntry = { x: tgtRaw.x - udx * INSET_TGT + perpX, y: tgtRaw.y - udy * INSET_TGT + perpY };
 
       const visLen = Math.hypot(tgtRaw.x - srcRaw.x, tgtRaw.y - srcRaw.y);
 
@@ -1173,9 +1216,10 @@ export const CloudMap = (() => {
       line2.style.opacity = svgOpacity;
       div.style.opacity = isFaded ? 0.07 : 1;
 
-      // Midpoint of the raw boundary gap (for label placement at true visual centre)
-      const mx = (srcRaw.x + tgtRaw.x) / 2;
-      const my = (srcRaw.y + tgtRaw.y) / 2;
+      // Midpoint of the raw boundary gap (for label placement at true visual
+      // centre) — offset perpendicularly so parallel labels don't stack.
+      const mx = (srcRaw.x + tgtRaw.x) / 2 + perpX;
+      const my = (srcRaw.y + tgtRaw.y) / 2 + perpY;
 
       if (label && visLen > 50) {
         // ── Labelled edge: split into two segments with gap ──
