@@ -129,44 +129,16 @@ export const CloudMap = (() => {
     </div>`;
   }
 
-  function _locationCloudH(loc, mode) {
+  function _locationCloudH(loc) {
     // strip + name + divider + optional status row + overhead
-    let rows = loc.status ? 1 : 0;
-    if (mode === 'mista') {
-      // region row + chip rows (~2 chars per row, max 3 rows)
-      if (loc.region) rows++;
-      const charCount = (loc.characters || []).length;
-      if (charCount) rows += Math.min(3, Math.ceil(charCount / 2));
-      const conCount = (loc.connections || []).length;
-      if (conCount) rows++;
-    }
+    const rows = loc.status ? 1 : 0;
     return _base() + rows * H_FACT + H_OVERHEAD;
   }
 
-  function _locationCloudHTML(loc, mode) {
+  function _locationCloudHTML(loc) {
     const status = loc.status || '';
     let body = '';
-
-    if (mode === 'mista') {
-      if (loc.region) body += `<div class="cm-fact cm-hint">${_esc(loc.region)}</div>`;
-      if (status)     body += `<div class="cm-fact cm-dim">${_esc(status)}</div>`;
-      const chars = (loc.characters || [])
-        .map(cid => Store.getCharacter(cid)).filter(Boolean);
-      if (chars.length) {
-        const chips = chars.slice(0, 6).map(c => {
-          const f = Store.getFactions()[c.faction] || {};
-          return `<span class="cm-loc-chip" style="--cc:${f.color || '#888'}">${_esc(c.name)}</span>`;
-        }).join('');
-        const more = chars.length > 6 ? `<span class="cm-loc-chip cm-loc-chip-more">+${chars.length - 6}</span>` : '';
-        body += `<div class="cm-loc-chips">${chips}${more}</div>`;
-      }
-      const conCount = (loc.connections || []).length;
-      if (conCount) {
-        body += `<div class="cm-fact cm-dim">${conCount} ${conCount === 1 ? 'spojení' : conCount < 5 ? 'spojení' : 'spojení'}</div>`;
-      }
-    } else {
-      if (status) body += `<div class="cm-fact cm-dim">${_esc(status)}</div>`;
-    }
+    if (status) body += `<div class="cm-fact cm-dim">${_esc(status)}</div>`;
 
     return `<div class="cm-cloud cm-location" data-id="${loc.id}" data-type="location"
               style="--cc:#5D7A3A; width:${CW}px">
@@ -790,7 +762,6 @@ export const CloudMap = (() => {
           <div class="map-title">☁ Myšlenkový Palác</div>
           <a href="#/mapa/frakce"    class="map-mode-btn ${mode==='frakce'    ?'active':''}">Frakce</a>
           <a href="#/mapa/vztahy"    class="map-mode-btn ${mode==='vztahy'    ?'active':''}">Vztahy</a>
-          <a href="#/mapa/mista"     class="map-mode-btn ${mode==='mista'     ?'active':''}">Místa</a>
           <a href="#/mapa/tajemstvi" class="map-mode-btn ${mode==='tajemstvi' ?'active':''}">Záhady</a>
           <button class="map-mode-btn cm-save-pos" onclick="CloudMap.resetLayout()" title="Vymaže uložené pozice a znovu rozloží uzly automaticky">⟳ Rozložení</button>
           <button class="map-mode-btn cm-save-pos" onclick="CloudMap.savePositions()" title="Uloží aktuální pozice uzlů">💾 Uložit pozice</button>
@@ -1467,11 +1438,6 @@ export const CloudMap = (() => {
       }});
     }
 
-    if (d.type === 'location' && _currentMode !== 'mista') {
-      items.push({ label: '📍 Otevřít v módu Místa', action: () => {
-        window.location.hash = '#/mapa/mista';
-      }});
-    }
     if (d.type === 'character' && _currentMode !== 'vztahy') {
       items.push({ label: '🔗 Zobrazit vazby', action: () => {
         window.location.hash = '#/mapa/vztahy';
@@ -1946,70 +1912,12 @@ export const CloudMap = (() => {
     }
   }
 
-  // ── MODE: MÍSTA ─────────────────────────────────────────────
-  // Locations as primary nodes; edges from each location's connections[].
-  // Each card shows region + status + character chips (inhabitants).
-  function _renderMista() {
-    _buildUI('mista');
-    const locations = Store.getLocations();
-    const locById = new Map(locations.map(l => [l.id, l]));
-
-    const nodes = locations.map(l =>
-      _proxy(l.id, 'location', CW, _locationCloudH(l, 'mista'))
-    );
-
-    // Dedupe undirected connections by sorted pair key
-    const seen = new Set();
-    const edges = [];
-    locations.forEach(l => {
-      (l.connections || []).forEach(toId => {
-        if (!locById.has(toId) || toId === l.id) return;
-        const key = [l.id, toId].sort().join('|');
-        if (seen.has(key)) return;
-        seen.add(key);
-        edges.push({
-          data: {
-            id: `con_${key}`,
-            source: l.id, target: toId,
-            label: '', color: '#5D7A3A', width: 2, lineStyle: 'solid',
-          }
-        });
-      });
-    });
-
-    _initCy([...nodes, ...edges], {
-      name: 'cose', animate: true, animationDuration: 700,
-      nodeRepulsion: 18000, gravity: 0.16, idealEdgeLength: 220,
-      padding: 80, randomize: false, numIter: 3000,
-    });
-
-    locations.forEach(l => _addCloud(_locationCloudHTML(l, 'mista'), l.id));
-    _bind();
-    _addEdgeLabels();
-
-    const leg = document.getElementById('map-legend');
-    if (leg) {
-      leg.innerHTML = `
-        <div class="legend-title">Místa</div>
-        <div class="legend-item">
-          <div class="legend-dot" style="background:#5D7A3A"></div> Místo
-        </div>
-        <div class="legend-item">
-          <div class="legend-line" style="border-top:2px solid #5D7A3A"></div> Spojení
-        </div>
-        <div class="legend-item" style="margin-top:0.4rem;color:var(--text-muted)">
-          Štítky uvnitř karty ukazují postavy v místě.
-        </div>`;
-    }
-  }
-
   // ── Public ────────────────────────────────────────────────
   function render(mode) {
     _destroy();
     switch (mode) {
       case 'frakce':     _renderFrakce();     break;
       case 'vztahy':     _renderVztahy();     break;
-      case 'mista':      _renderMista();      break;
       case 'tajemstvi':  _renderTajemstvi();  break;
       case 'casova-osa': _renderCasovaOsa();  break;
       default:           _renderFrakce();

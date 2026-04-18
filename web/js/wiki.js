@@ -174,7 +174,7 @@ export const Wiki = (() => {
           <div class="dash-card-title">Záhady &amp; Stopy</div>
           <div class="dash-card-desc">Otevřené otázky a co k nim víme. ${openMysteries} aktivních záhad.</div>
         </a>
-        <a href="#/mapa/casova-osa" class="dash-card" style="text-decoration:none">
+        <a href="#/casova-osa" class="dash-card" style="text-decoration:none">
           <div class="dash-card-icon">📜</div>
           <div class="dash-card-title">Časová Osa</div>
           <div class="dash-card-desc">Události kampaně v chronologickém pořadí s propojením na postavy.</div>
@@ -620,7 +620,7 @@ export const Wiki = (() => {
   }
 
   // ══════════════════════════════════════════════════════════════
-  //  EVENT ARTICLE (list view lives under /mapa/casova-osa)
+  //  EVENT ARTICLE (list view lives under /casova-osa)
   // ══════════════════════════════════════════════════════════════
   function renderEventArticle(id) {
     if (id === "new") return EditMode.renderEventEditor(null);

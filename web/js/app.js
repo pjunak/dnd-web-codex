@@ -38,7 +38,7 @@ window.Admin = Admin;
     requestAnimationFrame(() => Widgets.mountAll(document.body));
 
     // Mind-map sub-routes that all belong to Myšlenkový Palác
-    const PALAC_ROUTES = new Set(["/mapa/palac", "/mapa/frakce", "/mapa/vztahy", "/mapa/mista", "/mapa/tajemstvi"]);
+    const PALAC_ROUTES = new Set(["/mapa/palac", "/mapa/frakce", "/mapa/vztahy", "/mapa/tajemstvi"]);
 
     // Sync sidebar active state
     document.querySelectorAll("[data-route]").forEach(el => {
@@ -71,10 +71,7 @@ window.Admin = Admin;
     if (section === "mapa") {
       if (sub === "svet") {
         WorldMap.render();
-      } else if (sub === "casova-osa") {
-        // Legacy alias: keep /mapa/casova-osa working for any bookmarked links
-        Timeline.render();
-      } else if (sub === "palac" || sub === "frakce" || sub === "vztahy" || sub === "mista" || sub === "tajemstvi") {
+      } else if (sub === "palac" || sub === "frakce" || sub === "vztahy" || sub === "tajemstvi") {
         CloudMap.render(sub === "palac" ? "frakce" : sub);
       } else {
         CloudMap.render("frakce");
@@ -99,7 +96,7 @@ window.Admin = Admin;
       case "misto":
         Wiki.renderPage("misto", sub); break;
       case "udalosti":
-        window.location.hash = "#/mapa/casova-osa"; return;
+        window.location.hash = "#/casova-osa"; return;
       case "udalost":
         Wiki.renderPage("udalost", sub); break;
       case "zahady":

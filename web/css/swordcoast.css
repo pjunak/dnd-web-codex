@@ -145,9 +145,16 @@
   border-radius: 4px;
   border-left: 2px solid rgba(212,184,122,0.3);
 }
-.sc-pin-link { font-size: 0.8rem; margin-bottom: 0.75rem; }
-.sc-pin-link a { color: var(--accent-gold); text-decoration: none; }
-.sc-pin-link a:hover { text-decoration: underline; }
+.sc-pin-header-link {
+  text-decoration: none;
+  color: inherit;
+  border-radius: 4px;
+  padding: 0.25rem;
+  margin: -0.25rem -0.25rem 0.5rem;
+  transition: background 0.15s;
+}
+.sc-pin-header-link:hover { background: rgba(212,184,122,0.08); }
+.sc-pin-header-link:hover .sc-pin-name { color: var(--accent-gold); }
 .sc-pin-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
 .sc-pin-form-title {
   font-family: 'Cinzel', serif;

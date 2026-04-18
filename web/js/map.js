@@ -406,6 +406,13 @@ export const WorldMap = (() => {
   }
 
   function _openPinPanel(pinId) {
+    // Edit mode opens the edit form directly. Viewing opens a read-only
+    // panel whose header links to the place page.
+    if (document.body.classList.contains('edit-mode')) {
+      const pin = _pinsForCurrent().find(p => p.id === pinId) || {};
+      _renderPinForm(pin, false);
+      return;
+    }
     const pin = _pinsForCurrent().find(p => p.id === pinId);
     if (!pin) return;
     _editPinId = pinId;
@@ -422,33 +429,25 @@ export const WorldMap = (() => {
       ? `<div class="sc-pin-meta" style="margin-top:0.4rem">⛬ ${subCount} dílčí ${subCount === 1 ? 'místo' : 'míst(a)'}</div>`
       : '';
 
+    const headerInner = `
+      <span class="sc-pin-icon">${pt.icon}</span>
+      <div>
+        <div class="sc-pin-name">${_esc(pin.name)}</div>
+        <div class="sc-pin-meta">${pt.label} · <span style="color:${ps.labelColor}">${ps.label}</span></div>
+        ${subInfo}
+      </div>`;
+    const header = loc
+      ? `<a class="sc-pin-header sc-pin-header-link" href="#/misto/${loc.id}" onclick="WorldMap.closePanel()">${headerInner}</a>`
+      : `<div class="sc-pin-header">${headerInner}</div>`;
+
     document.getElementById('sc-panel-content').innerHTML = `
       <div class="sc-pin-view">
-        <div class="sc-pin-header">
-          <span class="sc-pin-icon">${pt.icon}</span>
-          <div>
-            <div class="sc-pin-name">${_esc(pin.name)}</div>
-            <div class="sc-pin-meta">${pt.label} · <span style="color:${ps.labelColor}">${ps.label}</span></div>
-            ${subInfo}
-          </div>
-        </div>
+        ${header}
         ${pin.notes ? `<div class="sc-pin-notes">${_esc(pin.notes)}</div>` : ''}
-        ${loc ? `<div class="sc-pin-link">
-          📖 <a href="#/misto/${loc.id}" onclick="WorldMap.closePanel()">Otevřít stránku místa</a>
-        </div>` : ''}
-        <div class="sc-pin-actions">
-          ${localMapBtn}
-          <button class="sc-btn ok edit-only-inline" onclick="WorldMap.openEditPin('${pinId}')">✏ Upravit</button>
-          <button class="sc-btn err edit-only-inline" onclick="WorldMap.deletePin('${pinId}')">🗑 Odebrat z mapy</button>
-        </div>
+        ${localMapBtn ? `<div class="sc-pin-actions">${localMapBtn}</div>` : ''}
       </div>
     `;
     document.getElementById('sc-panel').removeAttribute('hidden');
-  }
-
-  function openEditPin(pinId) {
-    const pin = _pinsForCurrent().find(p => p.id === pinId) || {};
-    _renderPinForm(pin, false);
   }
 
   function _openNewPin(x, y) {
@@ -499,7 +498,7 @@ export const WorldMap = (() => {
         <div class="sc-pin-actions">
           <button class="sc-btn ok" onclick="WorldMap.savePin(${isNew}, ${pin.x||0}, ${pin.y||0})">💾 Uložit</button>
           ${!isNew ? `<a class="sc-btn" href="#/misto/${pin.locationId}">📖 Otevřít místo</a>` : ''}
-          ${!isNew ? `<button class="sc-btn" onclick="WorldMap.openPinPanel('${pin.id}')">Zpět</button>` : ''}
+          ${!isNew ? `<button class="sc-btn err" onclick="WorldMap.deletePin('${pin.id}')">🗑 Odebrat z mapy</button>` : ''}
         </div>
       </div>
     `;
@@ -812,7 +811,7 @@ export const WorldMap = (() => {
     render,
     toggleAddMode, closePanel,
     toggleEventPaths,
-    openEditPin, openPinPanel, savePin, deletePin,
+    openPinPanel, savePin, deletePin,
     showSettings, closeSettings, applySettings, handleMapFileUpload,
     zoomFitAll, zoomMajorCities, zoomCurrentSitting,
     onSearchInput, jumpToFirstMatch, zoomToPin,

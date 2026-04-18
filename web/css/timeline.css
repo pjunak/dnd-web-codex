@@ -200,17 +200,6 @@
   background: rgba(200,160,64,0.25);
   pointer-events: none;
 }
-.tl-divider-label {
-  position: absolute;
-  font-family: var(--font-ui);
-  font-size: 9px;
-  color: var(--text-muted);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
 /* Section bracket + label (Minulost / Sezení N) */
 .tl-section-bracket {
   position: absolute;

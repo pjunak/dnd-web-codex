@@ -452,7 +452,7 @@ export const EditMode = (() => {
     if (!confirm("Opravdu smazat událost?")) return;
     Store.deleteEvent(id);
     _toast("Událost smazána");
-    window.location.hash = "#/mapa/casova-osa";
+    window.location.hash = "#/casova-osa";
   }
 
   // ══════════════════════════════════════════════════════════════

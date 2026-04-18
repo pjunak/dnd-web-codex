@@ -121,20 +121,13 @@ export const Timeline = (() => {
   }
 
   // ── Place a session divider ───────────────────────────────────
-  function _placeDivider(canvas, x, labelText) {
+  function _placeDivider(canvas, x) {
     const bar = document.createElement('div');
     bar.className = 'tl-divider-bar';
     bar.style.left = (x + DIV_W / 2 - 1) + 'px';
     bar.style.top  = (AXIS_Y - 70) + 'px';
     bar.style.height = '140px';
     canvas.appendChild(bar);
-
-    const lbl = document.createElement('div');
-    lbl.className = 'tl-divider-label';
-    lbl.style.left = (x + DIV_W / 2 + 6) + 'px';
-    lbl.style.top  = (AXIS_Y - 10) + 'px';
-    lbl.textContent = labelText;
-    canvas.appendChild(lbl);
   }
 
   // ── Place a section bracket label ─────────────────────────────
@@ -191,7 +184,7 @@ export const Timeline = (() => {
       });
       _placeSectionBracket(canvas, startX, x, 'Dávná minulost', true);
       // Divider between past and sessions
-      _placeDivider(canvas, x, 'Minulost / Kampaň');
+      _placeDivider(canvas, x);
       x += DIV_W;
     }
 
@@ -209,7 +202,7 @@ export const Timeline = (() => {
       _placeSectionBracket(canvas, startX, x, `Sezení ${s}`, false);
 
       if (s < maxSitting) {
-        _placeDivider(canvas, x, `Sezení ${s} / ${s + 1}`);
+        _placeDivider(canvas, x);
         x += DIV_W;
       }
     }
