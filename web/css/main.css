@@ -143,6 +143,18 @@ p  { color: var(--text-parchment); margin-bottom: 0.75em; }
   border-top: 1px solid rgba(255,255,255,0.05);
   margin-top: 0.5rem;
 }
+/* Stronger visual separation between the two main groups. */
+.sidebar-section-campaign,
+.sidebar-section-world {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid color-mix(in srgb, var(--accent-gold) 22%, transparent);
+  color: var(--accent-gold-dim);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+.sidebar-section-campaign { color: #ce93d8; border-top-color: rgba(156,77,204,0.35); }
+.sidebar-section-world    { color: #9cc69a; border-top-color: rgba(106,160,100,0.35); }
 .sidebar-nav { padding: 0 0.5rem; }
 .sidebar-nav li { margin: 2px 0; }
 .nav-link {

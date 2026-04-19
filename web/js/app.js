@@ -92,6 +92,8 @@ window.Admin = Admin;
       case "":
       case "dashboard":
         Wiki.renderPage("dashboard"); break;
+      case "parta":
+        Wiki.renderPage("parta"); break;
       case "postavy":
         Wiki.renderPage("postavy"); break;
       case "postava":

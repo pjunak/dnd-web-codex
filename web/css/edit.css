@@ -571,10 +571,53 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
 .md-view a,
 .md-edit-preview a { color: var(--accent-gold); }
 
-/* ── Markdown editor: Zápis/Náhled tabs ───────────────────────── */
+/* ── Markdown editor: toolbar + Zápis/Náhled tabs ─────────────── */
 .md-edit { display: flex; flex-direction: column; }
+.md-edit-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.3rem 0.4rem;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(200,160,64,0.2);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  align-items: center;
+}
+.md-btn-group {
+  display: inline-flex;
+  gap: 0.15rem;
+  padding-right: 0.4rem;
+  border-right: 1px solid rgba(200,160,64,0.18);
+}
+.md-btn-group:last-of-type { border-right: none; }
+.md-btn {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 0.4rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.md-btn:hover {
+  background: rgba(200,160,64,0.12);
+  color: var(--accent-gold);
+  border-color: rgba(200,160,64,0.35);
+}
+.md-btn b { font-weight: 800; }
+.md-btn i { font-style: italic; }
 .md-edit-tabs {
-  display: flex; gap: 0.25rem; margin-bottom: 0.25rem;
+  display: flex;
+  gap: 0.2rem;
+  margin-left: auto;
 }
 .md-tab {
   background: transparent;
@@ -583,20 +626,26 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
   font-family: var(--font-ui);
   font-size: 0.72rem;
   padding: 0.3rem 0.75rem;
-  border-radius: 4px 4px 0 0;
+  border-radius: 4px;
   cursor: pointer;
   letter-spacing: 0.04em;
 }
+.md-tab.is-active,
 .md-tab.active {
-  background: rgba(200,160,64,0.15);
+  background: rgba(200,160,64,0.2);
   color: var(--text-parchment);
-  border-color: rgba(200,160,64,0.5);
+  border-color: rgba(200,160,64,0.55);
+}
+.md-edit-ta {
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
 }
 .md-edit-preview {
   min-height: 4em;
-  padding: 0.6rem 0.75rem;
+  padding: 0.7rem 0.85rem;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
   background: var(--bg-raised);
   color: var(--text-parchment);
 }
