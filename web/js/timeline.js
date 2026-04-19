@@ -1,39 +1,32 @@
 // ═══════════════════════════════════════════════════════════════
-//  TIMELINE — Lineární časová osa
-//  Horizontálně scrollovatelná osa s informačními oblaky.
-//  Každý event je oblak nad/pod osou. Sezení jsou oddělena
-//  svislými oddělovači. Události mimo sezení jdou do "Minulosti".
+//  TIMELINE — Kanban board (column per sezení)
+//  Events live in columns. "Dávná minulost" is the leftmost
+//  column, then Sezení 1..N. In edit mode, an extra phantom
+//  column at the end accepts drops to create a new sezení, and
+//  each column exposes "+ Nová událost" + per-card drag-drop.
+//
+//  Stacking: columns with more than STACK_THRESHOLD cards fan
+//  out on hover/tap. Collapsed, cards peek with a vertical
+//  offset; expanded, they separate back to normal spacing.
 // ═══════════════════════════════════════════════════════════════
 
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
 
-// Flat render order of events. Populated on every render() and consumed by
-// the drag-drop handler to rebuild sittings/orders after a reorder.
-let _flatList = [];
+const STACK_THRESHOLD = 4;
+
+// Drag state (outside IIFE so the native dragstart/dragover/drop
+// handlers wired directly on DOM nodes can see it).
 let _draggingId = null;
 
 export const Timeline = (() => {
 
-  // ── Layout constants ──────────────────────────────────────────
-  const SLOT_W     = 230;   // horizontal space per event (px)
-  const DIV_W      = 110;   // width of a session-divider zone
-  const PAD_LEFT   = 80;    // left padding before first event
-  const PAD_RIGHT  = 100;   // trailing right padding
-  const CANVAS_H   = 680;   // total canvas height (px)
-  const AXIS_Y     = 330;   // Y of axis line from top of canvas
-  const STEM_H     = 52;    // stem height (axis dot → cloud edge)
-  const CLOUD_W    = 210;   // cloud card width (px)
-  const CLOUD_MAX_H_ABOVE = 240; // max space allocated above axis for clouds
-
-  // ── Helpers ───────────────────────────────────────────────────
   function _esc(s) {
     return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   function _factionColor(id) { return Store.getFactions()[id]?.color || '#8B6914'; }
 
-  // Primary character faction colour for an event, or gold fallback
   function _eventAccentColor(e) {
     const chars = Store.getCharacters();
     for (const cid of (e.characters || [])) {
@@ -43,32 +36,29 @@ export const Timeline = (() => {
     return '#8B6914';
   }
 
-  // Recompute `sitting` + `order` across all events after a drag.
-  // Given the ordered list (post-drop, with the moved event in its new slot
-  // and its sitting already overridden), re-number `order` as 1,2,3 per
-  // sitting group. Every event whose sitting or order actually changed is
-  // persisted via Store.saveEvent.
-  function _commitDragReorder(orderedList) {
-    const perSitting = new Map();
+  // ── Persist after a drag. Given the post-drop mapping of
+  // sitting → ordered event ids, renumber `order` 1,2,3… and
+  // write every event whose (sitting, order) actually changed.
+  function _commitReorder(columns) {
     const writes = [];
-    orderedList.forEach(e => {
-      const key = e.sitting ?? '__past__';
-      const idx = (perSitting.get(key) ?? 0) + 1;
-      perSitting.set(key, idx);
-      const existing = Store.getEvent(e.id);
-      if (!existing) return;
-      if (existing.sitting !== e.sitting || existing.order !== idx) {
-        writes.push({ ...existing, sitting: e.sitting, order: idx });
-      }
+    columns.forEach(col => {
+      col.ids.forEach((id, idx) => {
+        const existing = Store.getEvent(id);
+        if (!existing) return;
+        const order = idx + 1;
+        if (existing.sitting !== col.sitting || existing.order !== order) {
+          writes.push({ ...existing, sitting: col.sitting, order });
+        }
+      });
     });
     writes.forEach(w => Store.saveEvent(w));
     return writes.length > 0;
   }
 
-  // Build the HTML for one event cloud card
-  function _cloudHTML(e) {
-    const chars   = Store.getCharacters();
-    const locs    = Store.getLocations();
+  // ── Card HTML ─────────────────────────────────────────────────
+  function _cardHTML(e) {
+    const chars = Store.getCharacters();
+    const locs  = Store.getLocations();
 
     const charNames = (e.characters || []).slice(0, 4).map(id => {
       const c = chars.find(x => x.id === id);
@@ -82,236 +72,255 @@ export const Timeline = (() => {
       return l ? _esc(l.name) : _esc(id);
     });
 
-    const sitting = e.sitting
-      ? `<span class="tl-strip-sitting">Sezení ${e.sitting}</span>`
-      : `<span class="tl-strip-past">Minulost</span>`;
-
     return `
-      <div class="tl-cloud" data-id="${e.id}" tabindex="0" role="button"
-           aria-label="${_esc(e.name)}" style="--tc:${_eventAccentColor(e)}">
-        <div class="tl-cloud-strip">${sitting}</div>
-        <div class="tl-cloud-name">${_esc(e.name)}</div>
-        <div class="tl-cloud-divider"></div>
-        ${e.short ? `<div class="tl-cloud-desc">${_esc(e.short)}</div>` : ''}
-        ${charNames.length ? `<div class="tl-cloud-chars">👤 ${charNames.join(', ')}${charMore}</div>` : ''}
-        ${locNames.length  ? `<div class="tl-cloud-loc">📍 ${locNames.join(' → ')}</div>` : ''}
+      <div class="tl-card-name">${_esc(e.name)}</div>
+      ${e.short ? `<div class="tl-card-desc">${_esc(e.short)}</div>` : ''}
+      <div class="tl-card-meta">
+        ${charNames.length ? `<div class="tl-card-chars">👤 ${charNames.join(', ')}${charMore}</div>` : ''}
+        ${locNames.length  ? `<div class="tl-card-loc">📍 ${locNames.join(' → ')}</div>` : ''}
       </div>`;
   }
 
-  // ── Place one event on the canvas ─────────────────────────────
-  function _placeEvent(canvas, e, x, globalIdx) {
-    const above = globalIdx % 2 === 0;
-    const midX  = x + SLOT_W / 2;
+  // Build one card element with drag handlers wired in edit mode.
+  function _buildCard(e, colEl) {
+    const card = document.createElement('div');
+    card.className = 'tl-card';
+    card.dataset.id = e.id;
+    card.style.setProperty('--tc', _eventAccentColor(e));
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-label', e.name);
+    card.innerHTML = _cardHTML(e);
 
-    // Axis dot
-    const dot = document.createElement('div');
-    dot.className = 'tl-dot' + (e.sitting ? '' : ' tl-dot-past');
-    dot.style.left = (midX - 6) + 'px';
-    dot.style.top  = (AXIS_Y - 6) + 'px';
-    canvas.appendChild(dot);
-
-    // Stem (vertical line from dot to cloud)
-    const stem = document.createElement('div');
-    stem.className = 'tl-stem' + (e.sitting ? '' : ' tl-stem-past');
-    stem.style.left   = midX + 'px';
-    stem.style.height = STEM_H + 'px';
-    if (above) {
-      stem.style.top = (AXIS_Y - STEM_H) + 'px';
-    } else {
-      stem.style.top = AXIS_Y + 'px';
-    }
-    canvas.appendChild(stem);
-
-    // Cloud wrapper
-    const wrapper = document.createElement('div');
-    wrapper.className = 'tl-cloud-wrapper ' + (above ? 'tl-above' : 'tl-below');
-    wrapper.style.left  = (midX - CLOUD_W / 2) + 'px';
-    if (above) {
-      // bottom of wrapper = top of stem (AXIS_Y - STEM_H)
-      // canvas height is CANVAS_H, so bottom-offset = CANVAS_H - (AXIS_Y - STEM_H)
-      wrapper.style.bottom = (CANVAS_H - AXIS_Y + STEM_H) + 'px';
-      wrapper.style.maxHeight = (AXIS_Y - STEM_H - 20) + 'px';
-    } else {
-      wrapper.style.top = (AXIS_Y + STEM_H) + 'px';
-      wrapper.style.maxHeight = (CANVAS_H - AXIS_Y - STEM_H - 20) + 'px';
-    }
-    wrapper.style.width = CLOUD_W + 'px';
-    wrapper.innerHTML = _cloudHTML(e);
-    canvas.appendChild(wrapper);
-
-    const cloud = wrapper.querySelector('.tl-cloud');
-
-    // Click to navigate. Suppressed if a drag just finished (the drop
-    // target also receives a synthetic click on some browsers).
-    cloud.addEventListener('click', () => {
-      if (cloud.dataset.tlJustDragged === '1') {
-        delete cloud.dataset.tlJustDragged;
+    card.addEventListener('click', () => {
+      if (card.dataset.tlJustDragged === '1') {
+        delete card.dataset.tlJustDragged;
         return;
       }
       window.location.hash = `#/udalost/${e.id}`;
     });
-    cloud.addEventListener('keydown', ev => {
+    card.addEventListener('keydown', ev => {
       if (ev.key === 'Enter' || ev.key === ' ') window.location.hash = `#/udalost/${e.id}`;
     });
 
-    // Drag-drop reorder (edit mode only).
     if (EditMode.isActive()) {
-      cloud.setAttribute('draggable', 'true');
-      cloud.addEventListener('dragstart', ev => {
+      card.setAttribute('draggable', 'true');
+      card.addEventListener('dragstart', ev => {
         _draggingId = e.id;
-        cloud.classList.add('tl-drag-src');
-        // Some browsers need data on the transfer to start a drag.
+        card.classList.add('tl-drag-src');
+        // Expand the source column so the user can see where they're
+        // picking from and mid-column drops land precisely.
+        colEl.classList.add('tl-col-expanded');
         try { ev.dataTransfer.setData('text/plain', e.id); } catch {}
         ev.dataTransfer.effectAllowed = 'move';
       });
-      cloud.addEventListener('dragend', () => {
-        cloud.classList.remove('tl-drag-src');
-        wrapper.classList.remove('tl-drop-left', 'tl-drop-right');
+      card.addEventListener('dragend', () => {
+        card.classList.remove('tl-drag-src');
+        card.dataset.tlJustDragged = '1';
+        setTimeout(() => { delete card.dataset.tlJustDragged; }, 0);
+        // Cleanup any lingering drop indicators.
+        document.querySelectorAll('.tl-drop-indicator').forEach(n => n.remove());
+        document.querySelectorAll('.tl-col-expanded').forEach(n => {
+          // Leave columns expanded only if the pointer is currently over
+          // them (hover keeps them open naturally).
+          if (!n.matches(':hover')) n.classList.remove('tl-col-expanded');
+        });
         _draggingId = null;
-        cloud.dataset.tlJustDragged = '1';
-        setTimeout(() => { delete cloud.dataset.tlJustDragged; }, 0);
-      });
-      wrapper.addEventListener('dragover', ev => {
-        if (!_draggingId || _draggingId === e.id) return;
-        ev.preventDefault();
-        ev.dataTransfer.dropEffect = 'move';
-        const rect = wrapper.getBoundingClientRect();
-        const before = (ev.clientX - rect.left) < rect.width / 2;
-        wrapper.classList.toggle('tl-drop-left', before);
-        wrapper.classList.toggle('tl-drop-right', !before);
-      });
-      wrapper.addEventListener('dragleave', () => {
-        wrapper.classList.remove('tl-drop-left', 'tl-drop-right');
-      });
-      wrapper.addEventListener('drop', ev => {
-        ev.preventDefault();
-        wrapper.classList.remove('tl-drop-left', 'tl-drop-right');
-        const srcId = _draggingId;
-        _draggingId = null;
-        if (!srcId || srcId === e.id) return;
-        const rect = wrapper.getBoundingClientRect();
-        const before = (ev.clientX - rect.left) < rect.width / 2;
-        _handleDrop(srcId, e.id, before);
       });
     }
+    return card;
   }
 
-  // Rebuild the flat list with `srcId` inserted before/after `tgtId` and the
-  // dragged event's sitting overridden to the target's. Then persist and
-  // re-render.
-  function _handleDrop(srcId, tgtId, insertBefore) {
-    const list = _flatList.slice();
-    const srcIdx = list.findIndex(x => x.id === srcId);
-    const tgtIdx = list.findIndex(x => x.id === tgtId);
-    if (srcIdx < 0 || tgtIdx < 0) return;
-    const moved = { ...list[srcIdx], sitting: list[tgtIdx].sitting };
-    list.splice(srcIdx, 1);
-    const reTgtIdx = list.findIndex(x => x.id === tgtId);
-    const insertAt = insertBefore ? reTgtIdx : reTgtIdx + 1;
-    list.splice(insertAt, 0, moved);
-    if (_commitDragReorder(list)) {
-      // Store.saveEvent schedules a write; SSE will re-render, but do a
-      // local refresh too so the DM sees the reorder immediately without
-      // waiting for the round-trip.
-      render();
+  // Pick the insertion index inside a column body from the pointer Y.
+  // Returns the index in the column's current child card list. N means
+  // "after the last existing card" (i.e., at the tail).
+  function _insertIndexFromEvent(bodyEl, clientY) {
+    const cards = [...bodyEl.querySelectorAll('.tl-card:not(.tl-drag-src)')];
+    for (let i = 0; i < cards.length; i++) {
+      const r = cards[i].getBoundingClientRect();
+      if (clientY < r.top + r.height / 2) return i;
     }
+    return cards.length;
   }
 
-  // ── Place a session divider ───────────────────────────────────
-  function _placeDivider(canvas, x) {
-    const bar = document.createElement('div');
-    bar.className = 'tl-divider-bar';
-    bar.style.left = (x + DIV_W / 2 - 1) + 'px';
-    bar.style.top  = (AXIS_Y - 70) + 'px';
-    bar.style.height = '140px';
-    canvas.appendChild(bar);
+  // Show a thin gold line at the prospective drop position.
+  function _showDropIndicator(bodyEl, idx) {
+    document.querySelectorAll('.tl-drop-indicator').forEach(n => n.remove());
+    const cards = [...bodyEl.querySelectorAll('.tl-card:not(.tl-drag-src)')];
+    const line = document.createElement('div');
+    line.className = 'tl-drop-indicator';
+    if (idx >= cards.length) bodyEl.appendChild(line);
+    else                     bodyEl.insertBefore(line, cards[idx]);
   }
 
-  // ── Place a section bracket label ─────────────────────────────
-  function _placeSectionBracket(canvas, startX, endX, text, isPast) {
-    const bracket = document.createElement('div');
-    bracket.className = 'tl-section-bracket' + (isPast ? ' tl-section-past' : '');
-    bracket.style.left  = startX + 'px';
-    bracket.style.width = (endX - startX) + 'px';
-    bracket.style.top   = (AXIS_Y + 16) + 'px';
-    bracket.innerHTML   = `<span class="tl-section-text">${_esc(text)}</span>`;
-    canvas.appendChild(bracket);
+  // Wire dragover + drop on a column. sittingKey is a number or null
+  // (null = "Dávná minulost" column).
+  function _wireColumnDrop(colEl, bodyEl, sittingKey) {
+    colEl.addEventListener('dragover', ev => {
+      if (_draggingId == null) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      colEl.classList.add('tl-col-expanded');
+      const idx = _insertIndexFromEvent(bodyEl, ev.clientY);
+      _showDropIndicator(bodyEl, idx);
+    });
+    colEl.addEventListener('dragleave', ev => {
+      // Only clear when leaving the column outright (not entering a
+      // descendant). relatedTarget may be null for OS-boundary events.
+      if (ev.relatedTarget && colEl.contains(ev.relatedTarget)) return;
+      document.querySelectorAll('.tl-drop-indicator').forEach(n => n.remove());
+    });
+    colEl.addEventListener('drop', ev => {
+      if (_draggingId == null) return;
+      ev.preventDefault();
+      const srcId = _draggingId;
+      const idx = _insertIndexFromEvent(bodyEl, ev.clientY);
+      _draggingId = null;
+      document.querySelectorAll('.tl-drop-indicator').forEach(n => n.remove());
+      _handleDrop(srcId, sittingKey, idx);
+    });
+  }
+
+  // Rebuild all columns with `srcId` relocated to (targetSitting, insertIdx)
+  // and persist.
+  function _handleDrop(srcId, targetSitting, insertIdx) {
+    const events = Store.getEvents();
+    const byCol = _groupBySitting(events);
+    // Ensure target column exists (it might be the phantom "new sezení"
+    // column; the sitting key has already been resolved by the caller).
+    if (!byCol.has(targetSitting)) byCol.set(targetSitting, []);
+
+    // Remove src from whichever column currently contains it.
+    for (const [, list] of byCol) {
+      const i = list.findIndex(e => e.id === srcId);
+      if (i >= 0) list.splice(i, 1);
+    }
+    // Insert at requested index.
+    const src = events.find(e => e.id === srcId);
+    if (!src) return;
+    byCol.get(targetSitting).splice(insertIdx, 0, src);
+
+    // Build the renumbering payload and persist.
+    const columns = [...byCol.entries()].map(([sitting, list]) => ({
+      sitting,
+      ids: list.map(e => e.id),
+    }));
+    if (_commitReorder(columns)) render();
+  }
+
+  // Map sitting-key → ordered list of events. Past events (no sitting)
+  // live under key `null`. Orders within each sitting come from current
+  // `order` so rebuilds are stable.
+  function _groupBySitting(events) {
+    const out = new Map();
+    const sorted = [...events].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    sorted.forEach(e => {
+      const k = e.sitting ?? null;
+      if (!out.has(k)) out.set(k, []);
+      out.get(k).push(e);
+    });
+    return out;
   }
 
   // ── Main render ───────────────────────────────────────────────
   function render() {
-    // Sort: past events first, then by sitting, then by order within sitting
-    const allEvents = [...Store.getEvents()].sort((a, b) => {
-      const sA = a.sitting ?? 0;
-      const sB = b.sitting ?? 0;
-      if (sA !== sB) return sA - sB;
-      return (a.order ?? 0) - (b.order ?? 0);
-    });
+    const events = Store.getEvents();
+    const byCol  = _groupBySitting(events);
+    const maxSitting = events.reduce((m, e) => Math.max(m, e.sitting ?? 0), 0);
+    const editing = EditMode.isActive();
 
-    const pastEvents = allEvents.filter(e => !e.sitting);
-    const maxSitting = allEvents.reduce((m, e) => Math.max(m, e.sitting ?? 0), 0);
-    _flatList = allEvents;
-
-    // Build the shell HTML
     document.getElementById('main-content').style.display = '';
     document.getElementById('main-content').innerHTML = `
       <div class="tl-shell">
         <div class="tl-toolbar">
           <div class="tl-title">⏳ Časová Osa</div>
-          <span class="tl-hint">← Skroluj vodorovně · Klik na oblak = detail události${EditMode.isActive() ? ' · Táhni oblak = přeskládat' : ''}</span>
-          ${EditMode.isActive() ? `<button class="tl-add-btn" onclick="EditMode.startNewEvent()">＋ Nová událost</button>` : ''}
+          <span class="tl-hint">Klik na kartu = detail události${editing ? ' · Táhni kartu = přeskládat' : ''}</span>
+          ${editing ? `<button class="tl-add-btn" onclick="EditMode.startNewEvent()">＋ Nová událost</button>` : ''}
         </div>
-        <div class="tl-viewport" id="tl-viewport">
-          <div class="tl-canvas" id="tl-canvas" style="position:relative;height:${CANVAS_H}px">
-            <div class="tl-axis-line" id="tl-axis-line" style="top:${AXIS_Y}px"></div>
-          </div>
+        <div class="tl-board-viewport">
+          <div class="tl-board" id="tl-board"></div>
         </div>
+      </div>`;
+
+    const board = document.getElementById('tl-board');
+
+    // Past column
+    _renderColumn(board, {
+      sitting: null,
+      label:   'Dávná minulost',
+      events:  byCol.get(null) || [],
+      editing,
+      variant: 'past',
+    });
+
+    // One column per sezení in 1..maxSitting (including empty ones so
+    // you can drop into a skipped session).
+    for (let s = 1; s <= maxSitting; s++) {
+      _renderColumn(board, {
+        sitting: s,
+        label:   `Sezení ${s}`,
+        events:  byCol.get(s) || [],
+        editing,
+        variant: 'sitting',
+      });
+    }
+
+    // Phantom "new sezení" column (edit mode only). Drop here to bump
+    // an event into a brand-new sezení at the end.
+    if (editing) {
+      _renderColumn(board, {
+        sitting: maxSitting + 1,
+        label:   `Nové sezení ${maxSitting + 1}`,
+        events:  [],
+        editing,
+        variant: 'phantom',
+      });
+    }
+  }
+
+  function _renderColumn(board, opts) {
+    const { sitting, label, events, editing, variant } = opts;
+    const col = document.createElement('div');
+    col.className = `tl-col tl-col-${variant}`;
+    col.dataset.sitting = sitting == null ? '__past__' : String(sitting);
+    if (events.length > STACK_THRESHOLD) col.classList.add('tl-col-stacked');
+
+    // Header
+    col.innerHTML = `
+      <div class="tl-col-header">
+        <div class="tl-col-title">${_esc(label)}</div>
+        <div class="tl-col-count">${events.length || ''}</div>
       </div>
+      <div class="tl-col-body"></div>
+      ${editing ? `<button class="tl-col-add" data-sitting="${sitting == null ? '' : sitting}">＋ Nová událost</button>` : ''}
     `;
 
-    const canvas = document.getElementById('tl-canvas');
-    let x = PAD_LEFT;
-    let globalIdx = 0;
+    const body = col.querySelector('.tl-col-body');
+    events.forEach(e => body.appendChild(_buildCard(e, col)));
 
-    // ── Past events ─────────────────────────────────────────────
-    if (pastEvents.length) {
-      const startX = x;
-      pastEvents.forEach(e => {
-        _placeEvent(canvas, e, x, globalIdx);
-        x += SLOT_W;
-        globalIdx++;
+    // Tap-to-expand for touch devices. Ignore taps on cards themselves
+    // (those navigate) — only the column background toggles.
+    if (col.classList.contains('tl-col-stacked')) {
+      col.addEventListener('click', ev => {
+        if (ev.target.closest('.tl-card')) return;
+        if (ev.target.closest('.tl-col-add')) return;
+        col.classList.toggle('tl-col-expanded');
       });
-      _placeSectionBracket(canvas, startX, x, 'Dávná minulost', true);
-      // Divider between past and sessions
-      _placeDivider(canvas, x);
-      x += DIV_W;
     }
 
-    // ── Session events ───────────────────────────────────────────
-    for (let s = 1; s <= maxSitting; s++) {
-      const sEvents = allEvents.filter(e => e.sitting === s);
-      if (!sEvents.length) continue;
-
-      const startX = x;
-      sEvents.forEach(e => {
-        _placeEvent(canvas, e, x, globalIdx);
-        x += SLOT_W;
-        globalIdx++;
-      });
-      _placeSectionBracket(canvas, startX, x, `Sezení ${s}`, false);
-
-      if (s < maxSitting) {
-        _placeDivider(canvas, x);
-        x += DIV_W;
+    if (editing) {
+      const btn = col.querySelector('.tl-col-add');
+      if (btn) {
+        btn.addEventListener('click', ev => {
+          ev.stopPropagation();
+          const prefill = sitting == null ? {} : { sitting };
+          EditMode.startNewEvent(prefill);
+        });
       }
+      _wireColumnDrop(col, body, sitting);
     }
 
-    x += PAD_RIGHT;
-
-    // Stretch canvas and axis
-    canvas.style.width = x + 'px';
-    const axisLine = document.getElementById('tl-axis-line');
-    axisLine.style.width = x + 'px';
+    board.appendChild(col);
   }
 
   return { render };
