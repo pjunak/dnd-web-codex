@@ -6,7 +6,7 @@
 
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
-import { norm, esc } from './utils.js';
+import { norm, esc, renderMarkdown } from './utils.js';
 import { PIN_TYPES } from './map.js';
 
 export const Wiki = (() => {
@@ -212,7 +212,7 @@ export const Wiki = (() => {
           <div class="mystery-card">
             <div class="mystery-name">❓ ${m.name}</div>
             <div class="mystery-priority priority-${m.priority}">${m.priority.toUpperCase()}</div>
-            <div class="mystery-desc">${m.description}</div>
+            <div class="mystery-desc md-view">${renderMarkdown(m.description)}</div>
           </div>`).join("")}
       </div>
     `;
@@ -433,7 +433,7 @@ export const Wiki = (() => {
               ${knowledgeBadge(c.knowledge)}
             </div>
             ${profileRow}
-            <div class="char-article-desc">${c.knowledge >= 2 ? c.description : "<em>O této postavě toho víme jen velmi málo.</em>"}</div>
+            <div class="char-article-desc md-view">${c.knowledge >= 2 ? renderMarkdown(c.description) : "<em>O této postavě toho víme jen velmi málo.</em>"}</div>
           </div>
         </div>
         ${knownFacts}${unknownFacts}${relChips}${eventList}
@@ -613,8 +613,8 @@ export const Wiki = (() => {
           <h1>📍 ${l.name}</h1>
           <div class="subtitle">${l.type || ''}${l.type && l.status ? ' · ' : ''}${l.status || ''}</div>
         </div>
-        <p>${l.description || ''}</p>
-        ${l.notes ? `<div class="location-note">${l.notes}</div>` : ""}
+        <div class="md-view">${renderMarkdown(l.description)}</div>
+        ${l.notes ? `<div class="location-note md-view">${renderMarkdown(l.notes)}</div>` : ""}
         ${mapRow}
         ${subList}
         ${chars ? `<div class="char-section">
@@ -652,7 +652,7 @@ export const Wiki = (() => {
           <h1>${e.name}</h1>
           <div class="subtitle">${e.sitting ? `Sezení ${e.sitting}` : 'Dávná minulost'}</div>
         </div>
-        <p>${e.description}</p>
+        <div class="md-view">${renderMarkdown(e.description)}</div>
         ${chars ? `<div class="char-section"><div class="char-section-title">Zúčastněné Postavy</div><div class="relation-chips">${chars}</div></div>` : ""}
         ${locs  ? `<div class="char-section"><div class="char-section-title">Místa</div><div class="relation-chips">${locs}</div></div>` : ""}
       </div>
@@ -690,7 +690,7 @@ export const Wiki = (() => {
               ${editBtn}
             </div>
             <div class="mystery-priority priority-${m.priority}">PRIORITA: ${m.priority.toUpperCase()}</div>
-            <div class="mystery-desc" style="margin-top:0.5rem">${m.description}</div>
+            <div class="mystery-desc md-view" style="margin-top:0.5rem">${renderMarkdown(m.description)}</div>
             ${(m.characters||[]).length ? `
               <div style="margin-top:0.75rem">
                 <div class="char-section-title" style="font-size:0.7rem;margin-bottom:0.4rem">SPOJENÉ POSTAVY</div>
@@ -724,7 +724,7 @@ export const Wiki = (() => {
           <h1>❓ ${m.name}</h1>
           <div class="subtitle mystery-priority priority-${m.priority}">PRIORITA: ${m.priority.toUpperCase()}</div>
         </div>
-        <p>${m.description}</p>
+        <div class="md-view">${renderMarkdown(m.description)}</div>
         ${(m.characters||[]).length ? `
           <div class="char-section">
             <div class="char-section-title">Spojené Postavy</div>
@@ -903,7 +903,7 @@ export const Wiki = (() => {
           </div>
         </div>
         ${inlineCreate}
-        ${f.description ? `<p style="margin-top:1rem">${f.description}</p>` : ""}
+        ${f.description ? `<div class="md-view" style="margin-top:1rem">${renderMarkdown(f.description)}</div>` : ""}
         ${(f.rankChains || []).length ? `
           <div class="char-section" style="margin-top:1.5rem">
             <div class="char-section-title">Hodnostní Řetězce</div>
@@ -919,6 +919,192 @@ export const Wiki = (() => {
         <div style="margin-top:1.5rem">
           <a href="#/frakce" class="wiki-link">← Zpět na frakce</a>
         </div>
+      </div>
+    `;
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  //  SPECIES / PANTHEON / ARTIFACTS
+  // ══════════════════════════════════════════════════════════════
+  function _simpleListHeader(title, subtitle, newHref, newLabel) {
+    const newBtn = EditMode.isActive() && newHref
+      ? `<a href="${newHref}" class="list-item-new" style="text-decoration:none">＋ ${newLabel}</a>` : '';
+    return `
+      <div class="page-header" style="display:flex;align-items:center;gap:1rem">
+        <div style="flex:1">
+          <h1>${title}</h1>
+          <div class="subtitle">${subtitle}</div>
+        </div>
+        ${newBtn}
+      </div>`;
+  }
+
+  function _firstParagraph(md) {
+    const txt = String(md || '').trim();
+    if (!txt) return '';
+    const line = txt.split(/\n\s*\n/)[0];
+    return esc(line.length > 180 ? line.slice(0, 180) + '…' : line);
+  }
+
+  // ── Species (Druhy) ─────────────────────────────────────────────
+  function renderSpeciesList() {
+    const items = Store.getSpecies().slice()
+      .sort((a, b) => _czCompare(a.name, b.name));
+    const grid = items.length === 0
+      ? `<div class="list-empty">Žádné druhy.</div>`
+      : items.map(s => {
+          const editBtn = EditMode.isActive()
+            ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
+          return `<a class="loc-card" href="#/druh/${s.id}" style="text-decoration:none;position:relative">
+            ${editBtn}
+            <div class="loc-card-icon">🧬</div>
+            <div class="loc-card-body">
+              <div class="loc-card-name">${esc(s.name)}</div>
+              <div class="loc-card-type">${_firstParagraph(s.description)}</div>
+            </div>
+          </a>`;
+        }).join('');
+    return `
+      ${_simpleListHeader('🧬 Druhy', `${items.length} záznamů`, '#/druh/new', 'Nový druh')}
+      <div class="loc-grid">${grid}</div>
+    `;
+  }
+
+  function renderSpeciesArticle(id) {
+    if (id === 'new') return EditMode.renderSpeciesEditor(null);
+    const s = Store.getSpeciesItem(id);
+    if (!s) return `<p>Druh '${id}' nenalezen.</p>`;
+    if (EditMode.isActive()) return EditMode.renderSpeciesEditor(s);
+
+    // Characters of this species.
+    const chars = Store.getCharacters().filter(c =>
+      c.species === id || c.species === s.name
+    );
+    const charChips = chars.length ? `
+      <div class="char-section">
+        <div class="char-section-title">Postavy tohoto druhu</div>
+        <div class="relation-chips">
+          ${chars.map(c => `<a class="relation-chip" href="#/postava/${c.id}">${esc(c.name)}</a>`).join('')}
+        </div>
+      </div>` : '';
+
+    return `
+      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <div class="location-article">
+        <div class="page-header">
+          <h1>🧬 ${esc(s.name)}</h1>
+        </div>
+        <div class="md-view">${renderMarkdown(s.description)}</div>
+        ${charChips}
+      </div>
+    `;
+  }
+
+  // ── Pantheon (Panteon) ──────────────────────────────────────────
+  function renderPantheonList() {
+    const items = Store.getPantheon().slice()
+      .sort((a, b) => _czCompare(a.name, b.name));
+    const grid = items.length === 0
+      ? `<div class="list-empty">Žádná božstva.</div>`
+      : items.map(g => {
+          const editBtn = EditMode.isActive()
+            ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
+          const sub = [g.domain, g.alignment].filter(Boolean).map(esc).join(' · ');
+          return `<a class="loc-card" href="#/buh/${g.id}" style="text-decoration:none;position:relative">
+            ${editBtn}
+            <div class="loc-card-icon">${esc(g.symbol || '✨')}</div>
+            <div class="loc-card-body">
+              <div class="loc-card-name">${esc(g.name)}</div>
+              <div class="loc-card-type">${sub}</div>
+            </div>
+          </a>`;
+        }).join('');
+    return `
+      ${_simpleListHeader('✨ Panteon', `${items.length} božstev`, '#/buh/new', 'Nové božstvo')}
+      <div class="loc-grid">${grid}</div>
+    `;
+  }
+
+  function renderBuhArticle(id) {
+    if (id === 'new') return EditMode.renderBuhEditor(null);
+    const g = Store.getBuh(id);
+    if (!g) return `<p>Božstvo '${id}' nenalezeno.</p>`;
+    if (EditMode.isActive()) return EditMode.renderBuhEditor(g);
+
+    const bits = [];
+    if (g.domain)    bits.push(`<span class="profile-chip">🜲 ${esc(g.domain)}</span>`);
+    if (g.alignment) bits.push(`<span class="profile-chip">⚖ ${esc(g.alignment)}</span>`);
+    const profile = bits.length ? `<div class="char-article-profile">${bits.join('')}</div>` : '';
+
+    return `
+      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <div class="location-article">
+        <div class="page-header">
+          <h1>${esc(g.symbol || '✨')} ${esc(g.name)}</h1>
+        </div>
+        ${profile}
+        <div class="md-view">${renderMarkdown(g.description)}</div>
+      </div>
+    `;
+  }
+
+  // ── Artifacts (Artefakty) ───────────────────────────────────────
+  function _artifactStateChip(stateId) {
+    const st = Store.getArtifactStateMap()[stateId];
+    if (!st) return '';
+    return `<span class="badge" style="background:${st.color}22;color:${st.color};border:1px solid ${st.color}66">${st.icon} ${esc(st.label)}</span>`;
+  }
+
+  function renderArtifactList() {
+    const items = Store.getArtifacts().slice()
+      .sort((a, b) => _czCompare(a.name, b.name));
+    const grid = items.length === 0
+      ? `<div class="list-empty">Žádné artefakty.</div>`
+      : items.map(a => {
+          const editBtn = EditMode.isActive()
+            ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
+          return `<a class="loc-card" href="#/artefakt/${a.id}" style="text-decoration:none;position:relative">
+            ${editBtn}
+            <div class="loc-card-icon">🗝</div>
+            <div class="loc-card-body">
+              <div class="loc-card-name">${esc(a.name)}</div>
+              <div class="loc-card-type">${_artifactStateChip(a.state)}</div>
+            </div>
+          </a>`;
+        }).join('');
+    return `
+      ${_simpleListHeader('🗝 Artefakty', `${items.length} artefaktů`, '#/artefakt/new', 'Nový artefakt')}
+      <div class="loc-grid">${grid}</div>
+    `;
+  }
+
+  function renderArtifactArticle(id) {
+    if (id === 'new') return EditMode.renderArtifactEditor(null);
+    const a = Store.getArtifact(id);
+    if (!a) return `<p>Artefakt '${id}' nenalezen.</p>`;
+    if (EditMode.isActive()) return EditMode.renderArtifactEditor(a);
+
+    const owner = a.ownerCharacterId ? Store.getCharacter(a.ownerCharacterId) : null;
+    const loc   = a.locationId       ? Store.getLocation(a.locationId)        : null;
+
+    const links = [];
+    if (owner) links.push(`<a class="relation-chip" href="#/postava/${owner.id}">🎒 ${esc(owner.name)}</a>`);
+    if (loc)   links.push(`<a class="relation-chip" href="#/misto/${loc.id}">📍 ${esc(loc.name)}</a>`);
+    const linksRow = links.length ? `
+      <div class="char-section">
+        <div class="char-section-title">Vazby</div>
+        <div class="relation-chips">${links.join('')}</div>
+      </div>` : '';
+
+    return `
+      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <div class="location-article">
+        <div class="page-header">
+          <h1>🗝 ${esc(a.name)}</h1>
+          <div class="subtitle">${_artifactStateChip(a.state)}</div>
+        </div>
+        <div class="md-view">${renderMarkdown(a.description)}</div>
+        ${linksRow}
       </div>
     `;
   }
@@ -940,6 +1126,12 @@ export const Wiki = (() => {
       case "zahada":     html = renderMysteryArticle(param); break;
       case "frakce":     html = renderFactionList(); break;
       case "frakce-id":  html = renderFactionArticle(param); break;
+      case "druhy":      html = renderSpeciesList(); break;
+      case "druh":       html = renderSpeciesArticle(param); break;
+      case "panteon":    html = renderPantheonList(); break;
+      case "buh":        html = renderBuhArticle(param); break;
+      case "artefakty":  html = renderArtifactList(); break;
+      case "artefakt":   html = renderArtifactArticle(param); break;
       default:           html = renderDashboard();
     }
     el.innerHTML = html;

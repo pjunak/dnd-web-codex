@@ -9,6 +9,7 @@ import { Store } from './store.js';
 import { EditTemplates } from './edit_templates.js';
 import { Widgets } from './widgets/widgets.js';
 import { PIN_TYPES } from './map.js';
+import { renderMarkdown } from './utils.js';
 
 export const EditMode = (() => {
 
@@ -19,7 +20,8 @@ export const EditMode = (() => {
   // consumed once by the corresponding renderXxxEditor(null). Lets
   // "+ Nová postava ve frakci" (and similar) pre-fill context fields
   // instead of sending the user to a blank form.
-  let _prefill = { character: null, location: null, event: null };
+  let _prefill = { character: null, location: null, event: null,
+                   species: null, buh: null, artifact: null };
   function _consumePrefill(kind) {
     const p = _prefill[kind];
     _prefill[kind] = null;
@@ -219,6 +221,12 @@ export const EditMode = (() => {
       if (oldSegment !== newSegment) Store.deletePortrait(oldPortrait);
     }
 
+    // Gender select has a special "__other__" sentinel revealing a free-text input.
+    let gender = document.getElementById(`ef-gender-${uid}`)?.value || "";
+    if (gender === '__other__') {
+      gender = document.getElementById(`ef-gender-other-${uid}`)?.value.trim() || "";
+    }
+
     const ok = Store.saveCharacter({
       // Preserve all fields from existing record first, then overwrite editable ones
       ...existing,
@@ -228,8 +236,9 @@ export const EditMode = (() => {
       faction:     document.getElementById(`ef-faction-${uid}`)?.value             || "neutral",
       status:      document.getElementById(`ef-status-${uid}`)?.value              || "alive",
       species:     document.getElementById(`ef-species-${uid}`)?.value.trim()      || "",
-      gender:      document.getElementById(`ef-gender-${uid}`)?.value.trim()       || "",
+      gender,
       age:         document.getElementById(`ef-age-${uid}`)?.value.trim()          || "",
+      circumstances: document.getElementById(`ef-circumstances-${uid}`)?.value.trim() || "",
       knowledge:   parseInt(document.getElementById(`ef-knowledge-${uid}`)?.value) || 3,
       description: document.getElementById(`ef-desc-${uid}`)?.value.trim()         || "",
       portrait,
@@ -648,23 +657,182 @@ export const EditMode = (() => {
     window.location.hash = "#/frakce";
   }
 
+  // ── Gender "Ostatní (specifikuj)" reveal ──────────────────────
+  function onGenderChange(uid) {
+    const sel   = document.getElementById(`ef-gender-${uid}`);
+    const other = document.getElementById(`ef-gender-other-${uid}`);
+    if (!sel || !other) return;
+    if (sel.value === '__other__') {
+      other.style.display = '';
+      other.focus();
+    } else {
+      other.style.display = 'none';
+      other.value = '';
+    }
+  }
+
+  // ── Markdown textarea preview toggle ──────────────────────────
+  // Tabs at the top of every `.md-edit` block switch between the raw
+  // textarea (Zápis) and a rendered preview (Náhled). The preview
+  // uses window.marked + DOMPurify via utils.renderMarkdown.
+  document.addEventListener('click', (ev) => {
+    const tab = ev.target.closest('.md-edit .md-tab');
+    if (!tab) return;
+    const wrap = tab.closest('.md-edit');
+    if (!wrap) return;
+    const mode = tab.dataset.mdTab;
+    wrap.querySelectorAll('.md-tab').forEach(t => t.classList.toggle('is-active', t === tab));
+    const ta  = wrap.querySelector('.md-edit-ta');
+    const pv  = wrap.querySelector('.md-edit-preview');
+    if (!ta || !pv) return;
+    if (mode === 'preview') {
+      pv.innerHTML = renderMarkdown(ta.value);
+      pv.hidden = false;
+      ta.hidden = true;
+    } else {
+      pv.hidden = true;
+      ta.hidden = false;
+      ta.focus();
+    }
+  });
+  // Recompute preview live if the user types while preview is visible.
+  function onMdInput(id) {
+    const ta = document.getElementById(id);
+    const pv = document.getElementById(id + '__preview');
+    if (!ta || !pv || pv.hidden) return;
+    pv.innerHTML = renderMarkdown(ta.value);
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  //  SPECIES / PANTHEON / ARTIFACT editors
+  // ══════════════════════════════════════════════════════════════
+  function renderSpeciesEditor(s) {
+    if (!s || !s.id) {
+      const pf = _consumePrefill('species');
+      if (pf) return EditTemplates.renderSpeciesEditor(pf);
+    }
+    return EditTemplates.renderSpeciesEditor(s);
+  }
+  function startNewSpecies(prefill) {
+    _prefill.species = prefill || {};
+    _navigateOrRefresh('#/druh/new');
+  }
+  function saveSpecies(originalId) {
+    const uid  = originalId || 'new_sp';
+    const name = document.getElementById(`sf-name-${uid}`)?.value.trim();
+    if (!name) { _toast('Název je povinný', false); return; }
+    const newId = originalId || _genId(name);
+    const existing = originalId ? (Store.getSpeciesItem(originalId) || {}) : {};
+    Store.saveSpecies({
+      ...existing,
+      id: newId, name,
+      description: document.getElementById(`sf-desc-${uid}`)?.value.trim() || '',
+    });
+    _toast('✓ Druh uložen');
+    _navigateOrRefresh(`#/druh/${newId}`);
+  }
+  function deleteSpecies(id) {
+    if (!confirm('Opravdu smazat druh?')) return;
+    Store.deleteSpecies(id);
+    _toast('Druh smazán');
+    window.location.hash = '#/druhy';
+  }
+
+  function renderBuhEditor(g) {
+    if (!g || !g.id) {
+      const pf = _consumePrefill('buh');
+      if (pf) return EditTemplates.renderBuhEditor(pf);
+    }
+    return EditTemplates.renderBuhEditor(g);
+  }
+  function startNewBuh(prefill) {
+    _prefill.buh = prefill || {};
+    _navigateOrRefresh('#/buh/new');
+  }
+  function saveBuh(originalId) {
+    const uid  = originalId || 'new_god';
+    const name = document.getElementById(`gf-name-${uid}`)?.value.trim();
+    if (!name) { _toast('Jméno je povinné', false); return; }
+    const newId = originalId || _genId(name);
+    const existing = originalId ? (Store.getBuh(originalId) || {}) : {};
+    Store.saveBuh({
+      ...existing,
+      id: newId, name,
+      symbol:      document.getElementById(`gf-symbol-${uid}`)?.value.trim()   || '',
+      domain:      document.getElementById(`gf-domain-${uid}`)?.value.trim()   || '',
+      alignment:   document.getElementById(`gf-alignment-${uid}`)?.value.trim()|| '',
+      description: document.getElementById(`gf-desc-${uid}`)?.value.trim()     || '',
+    });
+    _toast('✓ Božstvo uloženo');
+    _navigateOrRefresh(`#/buh/${newId}`);
+  }
+  function deleteBuh(id) {
+    if (!confirm('Opravdu smazat božstvo?')) return;
+    Store.deleteBuh(id);
+    _toast('Božstvo smazáno');
+    window.location.hash = '#/panteon';
+  }
+
+  function renderArtifactEditor(a) {
+    if (!a || !a.id) {
+      const pf = _consumePrefill('artifact');
+      if (pf) return EditTemplates.renderArtifactEditor(pf);
+    }
+    return EditTemplates.renderArtifactEditor(a);
+  }
+  function startNewArtifact(prefill) {
+    _prefill.artifact = prefill || {};
+    _navigateOrRefresh('#/artefakt/new');
+  }
+  function saveArtifact(originalId) {
+    const uid  = originalId || 'new_art';
+    const name = document.getElementById(`af-name-${uid}`)?.value.trim();
+    if (!name) { _toast('Název je povinný', false); return; }
+    const newId = originalId || _genId(name);
+    const existing = originalId ? (Store.getArtifact(originalId) || {}) : {};
+    Store.saveArtifact({
+      ...existing,
+      id: newId, name,
+      state:            document.getElementById(`af-state-${uid}`)?.value           || 'ztraceny',
+      ownerCharacterId: document.getElementById(`af-owner-${uid}`)?.value.trim()    || '',
+      locationId:       document.getElementById(`af-loc-${uid}`)?.value.trim()      || '',
+      description:      document.getElementById(`af-desc-${uid}`)?.value.trim()     || '',
+    });
+    _toast('✓ Artefakt uložen');
+    _navigateOrRefresh(`#/artefakt/${newId}`);
+  }
+  function deleteArtifact(id) {
+    if (!confirm('Opravdu smazat artefakt?')) return;
+    Store.deleteArtifact(id);
+    _toast('Artefakt smazán');
+    window.location.hash = '#/artefakty';
+  }
+
   // ── Public API ─────────────────────────────────────────────────
   return {
     isActive, toggle,
     addDynRow, handlePortraitUpload,
     addRankChain, addRankRow,
-    saveCharacter, deleteCharacter,
+    saveCharacter, deleteCharacter, onGenderChange,
     addRelationship, updateRelationship, deleteRelationship, relTypeChanged,
     saveLocation, deleteLocation, uploadLocalMap, onLocationStatusChange,
     saveEvent, deleteEvent, addPartyToEvent,
     saveMystery, deleteMystery,
     saveFaction, deleteFaction,
+    saveSpecies, deleteSpecies,
+    saveBuh, deleteBuh,
+    saveArtifact, deleteArtifact,
+    onMdInput,
     renderCharacterEditor,
     renderLocationEditor,
     renderEventEditor,
     renderMysteryEditor,
     renderFactionEditor,
+    renderSpeciesEditor,
+    renderBuhEditor,
+    renderArtifactEditor,
     startNewCharacter, startNewLocation, startNewEvent,
+    startNewSpecies, startNewBuh, startNewArtifact,
     startNewCharacterInLocation,
   };
 

@@ -32,6 +32,28 @@ export function debounce(fn, ms = 120) {
   };
 }
 
+/**
+ * Render Markdown to sanitized HTML for long-description fields.
+ * Uses vendored marked + DOMPurify (loaded globally from index.html).
+ * Falls back to escaped + <br>-joined text if libs aren't loaded yet.
+ */
+export function renderMarkdown(src) {
+  const text = String(src ?? '');
+  if (!text.trim()) return '';
+  const marked  = window.marked;
+  const purify  = window.DOMPurify;
+  if (!marked || !purify) {
+    return esc(text).replace(/\n/g, '<br>');
+  }
+  const html = typeof marked.parse === 'function'
+    ? marked.parse(text, { breaks: true, gfm: true })
+    : marked(text, { breaks: true, gfm: true });
+  return purify.sanitize(html, {
+    ADD_ATTR: ['target', 'rel'],
+    FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed'],
+  });
+}
+
 /** Toast notification — reuses #app-toast singleton across all callers. */
 export function toast(msg, ok = true) {
   let t = document.getElementById('app-toast');

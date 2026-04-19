@@ -147,7 +147,7 @@ export const EditTemplates = (() => {
       const defaults = { id:"", name:"", title:"", faction:"neutral", status:"alive",
                          knowledge:3, description:"", portrait:"", location:"",
                          rankChain:"", rank:"", locationRoles:[],
-                         species:"", gender:"", age:"",
+                         species:"", gender:"", age:"", circumstances:"",
                          known:[], unknown:[], tags:[] };
       c = { ...defaults, ...(c || {}) };
     }
@@ -163,6 +163,30 @@ export const EditTemplates = (() => {
     const knownRows   = (c.known   || []).map(_dynRow).join("");
     const unknownRows = (c.unknown || []).map(_dynRow).join("");
     const badge = factions[c.faction]?.badge || "👤";
+
+    // Gender: fixed choices + "Ostatní (specifikuj)" reveal.
+    // We stash the current value in data- so saveCharacter can decide whether
+    // it was one of the canonical labels or a free-text override.
+    const GENDER_FIXED = ['Muž', 'Žena'];
+    const isOtherGender = !!(c.gender && !GENDER_FIXED.includes(c.gender));
+    const genderSelectValue = c.gender === '' ? '' : (isOtherGender ? '__other__' : c.gender);
+    const genderOpts = [
+      `<option value="" ${genderSelectValue===''?'selected':''}>— nezadáno —</option>`,
+      `<option value="Muž" ${genderSelectValue==='Muž'?'selected':''}>Muž</option>`,
+      `<option value="Žena" ${genderSelectValue==='Žena'?'selected':''}>Žena</option>`,
+      `<option value="__other__" ${genderSelectValue==='__other__'?'selected':''}>Ostatní (specifikuj)</option>`,
+    ].join('');
+
+    // Species: Combobox over the Druhy collection. Inline-create lets the
+    // GM spawn a new species page from this picker.
+    const speciesMount = `<div class="cb-mount"
+      data-cb-id="ef-species-${uid}"
+      data-cb-source="species"
+      data-cb-value="${_esc(c.species || '')}"
+      data-cb-allow-empty="1"
+      data-cb-empty-label="— neurčeno —"
+      data-cb-placeholder="Vyber druh…"
+      data-cb-on-create="species"></div>`;
 
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
@@ -216,16 +240,25 @@ export const EditTemplates = (() => {
             <div class="edit-row-3">
               <div class="edit-field">
                 <label class="edit-label">Druh</label>
-                <input class="edit-input" id="ef-species-${uid}" value="${_esc(c.species)}" placeholder="Člověk, Elf, Drak…">
+                ${speciesMount}
               </div>
               <div class="edit-field">
                 <label class="edit-label">Pohlaví</label>
-                <input class="edit-input" id="ef-gender-${uid}" value="${_esc(c.gender)}" placeholder="muž / žena / …">
+                <select class="edit-select" id="ef-gender-${uid}"
+                  onchange="EditMode.onGenderChange('${uid}')">${genderOpts}</select>
+                <input class="edit-input" id="ef-gender-other-${uid}" type="text"
+                  placeholder="Specifikuj…"
+                  value="${isOtherGender ? _esc(c.gender) : ''}"
+                  style="margin-top:0.4rem;display:${isOtherGender ? '' : 'none'}">
               </div>
               <div class="edit-field">
                 <label class="edit-label">Věk</label>
-                <input class="edit-input" id="ef-age-${uid}" value="${_esc(c.age)}" placeholder="32 / starý / neznámý">
+                <input class="edit-input" id="ef-age-${uid}" value="${_esc(c.age)}" placeholder="neznámý">
               </div>
+            </div>
+            <div class="edit-field">
+              <label class="edit-label">Okolnosti (např. zajat, na útěku, v kómatu…)</label>
+              <input class="edit-input" id="ef-circumstances-${uid}" value="${_esc(c.circumstances || '')}" placeholder="Volný text — zvláštní situace postavy">
             </div>
             <div class="edit-field">
               <label class="edit-label" id="ef-kl-${uid}">Znalost (${c.knowledge}/4) — ${KNAMES[c.knowledge]}</label>
@@ -235,7 +268,7 @@ export const EditTemplates = (() => {
             </div>
             <div class="edit-field">
               <label class="edit-label">Popis</label>
-              <textarea class="edit-textarea" id="ef-desc-${uid}" rows="4">${_esc(c.description)}</textarea>
+              ${_mdTextarea(`ef-desc-${uid}`, c.description, 6, 'Detailní popis postavy — podporuje Markdown')}
             </div>
           </div>
         </div>
@@ -363,11 +396,11 @@ export const EditTemplates = (() => {
         </div>
         <div class="edit-field">
           <label class="edit-label">Popis</label>
-          <textarea class="edit-textarea" id="lf-desc-${uid}" rows="4">${_esc(l.description)}</textarea>
+          ${_mdTextarea(`lf-desc-${uid}`, l.description, 6, 'Popis místa — podporuje Markdown')}
         </div>
         <div class="edit-field">
           <label class="edit-label">Záhadné poznámky</label>
-          <textarea class="edit-textarea" id="lf-notes-${uid}" rows="2">${_esc(l.notes||"")}</textarea>
+          ${_mdTextarea(`lf-notes-${uid}`, l.notes || '', 3, 'Poznámky pro GM')}
         </div>
 
         <div class="edit-section">
@@ -447,7 +480,7 @@ export const EditTemplates = (() => {
         </div>
         <div class="edit-field">
           <label class="edit-label">Podrobný popis</label>
-          <textarea class="edit-textarea" id="evf-desc-${uid}" rows="4">${_esc(e.description)}</textarea>
+          ${_mdTextarea(`evf-desc-${uid}`, e.description, 6, 'Co se přesně stalo — podporuje Markdown')}
         </div>
         <div class="edit-row-2">
           <div class="edit-section" style="margin-top:0">
@@ -513,7 +546,7 @@ export const EditTemplates = (() => {
         </div>
         <div class="edit-field">
           <label class="edit-label">Popis / Co víme</label>
-          <textarea class="edit-textarea" id="mf-desc-${uid}" rows="4">${_esc(m.description)}</textarea>
+          ${_mdTextarea(`mf-desc-${uid}`, m.description, 6, 'Co o záhadě víme a co tušíme — Markdown')}
         </div>
         <div class="edit-section">
           <div class="edit-section-title">Spojené postavy</div>
@@ -594,7 +627,7 @@ export const EditTemplates = (() => {
         </div>
         <div class="edit-field">
           <label class="edit-label">Popis frakce (volitelný)</label>
-          <textarea class="edit-textarea" id="ff-desc-${uid}" rows="3">${_esc(f.description || '')}</textarea>
+          ${_mdTextarea(`ff-desc-${uid}`, f.description || '', 6, 'Historie, cíle, struktura — Markdown')}
         </div>
 
         <div class="edit-section">
@@ -610,18 +643,174 @@ export const EditTemplates = (() => {
     `;
   }
 
+  // Markdown-enabled textarea with a 👁 Náhled preview toggle.
+  // Consumed by every long-description field so GMs can write wiki-style
+  // articles with headings, lists, links, bold/italic, etc.
+  function _mdTextarea(id, value, rows = 6, placeholder = '') {
+    const v = value == null ? '' : value;
+    return `
+      <div class="md-edit" data-md-for="${id}">
+        <div class="md-edit-toolbar">
+          <button type="button" class="md-tab is-active" data-md-tab="write">✎ Zápis</button>
+          <button type="button" class="md-tab" data-md-tab="preview">👁 Náhled</button>
+          <span class="md-hint">Markdown: **tučně**, *kurzíva*, # nadpis, - seznam, [text](url)</span>
+        </div>
+        <textarea class="edit-textarea md-edit-ta" id="${_esc(id)}"
+          rows="${rows}" placeholder="${_esc(placeholder)}"
+          oninput="EditMode.onMdInput('${_esc(id)}')">${_esc(v)}</textarea>
+        <div class="md-edit-preview" id="${_esc(id)}__preview" hidden></div>
+      </div>`;
+  }
+
+  // ── Species editor ─────────────────────────────────────────────
+  function renderSpeciesEditor(s) {
+    const isNew = !s || !s.id;
+    if (isNew) s = { id:'', name:'', description:'' };
+    const uid = s.id || 'new_sp';
+    return `
+      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <div class="edit-form" style="max-width:760px">
+        <div class="edit-form-header">
+          <h2 class="edit-form-title">${isNew ? "✦ Nový druh" : "✏ " + _esc(s.name)}</h2>
+          <div class="edit-hdr-actions">
+            <button class="edit-save-btn" onclick="EditMode.saveSpecies('${s.id}')">💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteSpecies('${s.id}')">🗑 Smazat</button>` : ""}
+          </div>
+        </div>
+        <div class="edit-field">
+          <label class="edit-label">Název *</label>
+          <input class="edit-input" id="sf-name-${uid}" value="${_esc(s.name)}" placeholder="Člověk, Elf, Dračizeň…">
+        </div>
+        <div class="edit-field">
+          <label class="edit-label">Popis</label>
+          ${_mdTextarea(`sf-desc-${uid}`, s.description, 10, 'Charakteristika druhu, schopnosti, kultura…')}
+        </div>
+      </div>`;
+  }
+
+  // ── Pantheon (deity) editor ────────────────────────────────────
+  function renderBuhEditor(g) {
+    const isNew = !g || !g.id;
+    if (isNew) g = { id:'', name:'', domain:'', alignment:'', symbol:'', description:'', tags:[] };
+    const uid = g.id || 'new_god';
+    return `
+      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <div class="edit-form" style="max-width:760px">
+        <div class="edit-form-header">
+          <h2 class="edit-form-title">${isNew ? "✦ Nový bůh / bohyně" : "✏ " + _esc(g.name)}</h2>
+          <div class="edit-hdr-actions">
+            <button class="edit-save-btn" onclick="EditMode.saveBuh('${g.id}')">💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteBuh('${g.id}')">🗑 Smazat</button>` : ""}
+          </div>
+        </div>
+        <div class="edit-row-2">
+          <div class="edit-field">
+            <label class="edit-label">Jméno *</label>
+            <input class="edit-input" id="gf-name-${uid}" value="${_esc(g.name)}" placeholder="Jméno božstva">
+          </div>
+          <div class="edit-field">
+            <label class="edit-label">Symbol</label>
+            <input class="edit-input" id="gf-symbol-${uid}" value="${_esc(g.symbol)}" placeholder="☀ / 🌙 / ⚔">
+          </div>
+        </div>
+        <div class="edit-row-2">
+          <div class="edit-field">
+            <label class="edit-label">Doména</label>
+            <input class="edit-input" id="gf-domain-${uid}" value="${_esc(g.domain)}" placeholder="Světlo, Smrt, Moře…">
+          </div>
+          <div class="edit-field">
+            <label class="edit-label">Zaměření</label>
+            <input class="edit-input" id="gf-alignment-${uid}" value="${_esc(g.alignment)}" placeholder="např. LG / CN / …">
+          </div>
+        </div>
+        <div class="edit-field">
+          <label class="edit-label">Popis</label>
+          ${_mdTextarea(`gf-desc-${uid}`, g.description, 10, 'Mýty, kult, rituály, kněží…')}
+        </div>
+      </div>`;
+  }
+
+  // ── Artifact editor ────────────────────────────────────────────
+  function renderArtifactEditor(a) {
+    const isNew = !a || !a.id;
+    if (isNew) a = { id:'', name:'', state:'ztraceny', ownerCharacterId:'', locationId:'', description:'', tags:[] };
+    const uid = a.id || 'new_art';
+
+    const states = Store.getArtifactStateMap();
+    const stateOpts = Object.entries(states).map(([k, v]) =>
+      `<option value="${k}" ${a.state===k?'selected':''}>${v.icon} ${v.label}</option>`).join('');
+
+    const ownerMount = `<div class="cb-mount"
+      data-cb-id="af-owner-${uid}"
+      data-cb-source="character"
+      data-cb-value="${_esc(a.ownerCharacterId || '')}"
+      data-cb-allow-empty="1"
+      data-cb-empty-label="— nikdo —"
+      data-cb-placeholder="Vyber postavu…"
+      data-cb-on-create="character"></div>`;
+
+    const locMount = `<div class="cb-mount"
+      data-cb-id="af-loc-${uid}"
+      data-cb-source="location"
+      data-cb-value="${_esc(a.locationId || '')}"
+      data-cb-allow-empty="1"
+      data-cb-empty-label="— neurčeno —"
+      data-cb-placeholder="Vyber místo…"
+      data-cb-on-create="location"></div>`;
+
+    return `
+      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <div class="edit-form" style="max-width:760px">
+        <div class="edit-form-header">
+          <h2 class="edit-form-title">${isNew ? "✦ Nový artefakt" : "✏ " + _esc(a.name)}</h2>
+          <div class="edit-hdr-actions">
+            <button class="edit-save-btn" onclick="EditMode.saveArtifact('${a.id}')">💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteArtifact('${a.id}')">🗑 Smazat</button>` : ""}
+          </div>
+        </div>
+        <div class="edit-row-2">
+          <div class="edit-field">
+            <label class="edit-label">Název *</label>
+            <input class="edit-input" id="af-name-${uid}" value="${_esc(a.name)}" placeholder="Název artefaktu">
+          </div>
+          <div class="edit-field">
+            <label class="edit-label">Stav</label>
+            <select class="edit-select" id="af-state-${uid}">${stateOpts}</select>
+          </div>
+        </div>
+        <div class="edit-row-2">
+          <div class="edit-field">
+            <label class="edit-label">Držitel (postava)</label>
+            ${ownerMount}
+          </div>
+          <div class="edit-field">
+            <label class="edit-label">Umístění (místo)</label>
+            ${locMount}
+          </div>
+        </div>
+        <div class="edit-field">
+          <label class="edit-label">Popis</label>
+          ${_mdTextarea(`af-desc-${uid}`, a.description, 10, 'Původ, schopnosti, prokletí, historie…')}
+        </div>
+      </div>`;
+  }
+
   return {
     renderCharacterEditor,
     renderLocationEditor,
     renderEventEditor,
     renderMysteryEditor,
     renderFactionEditor,
+    renderSpeciesEditor,
+    renderBuhEditor,
+    renderArtifactEditor,
     getDynRowHtml: _dynRow,
     getRelSectionHtml: _relSection,
     getDirOptsHtml: _dirOpts,
     getTargetMountHtml: _targetMount,
     getRelConfig: () => REL_CONFIG,
     getChainEditHtml: _chainEditHtml,
+    getMdTextareaHtml: _mdTextarea,
   };
 
 })();

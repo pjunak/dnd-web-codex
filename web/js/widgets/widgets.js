@@ -51,12 +51,19 @@ function _locOption(l) {
   return { value: l.id, label: l.name || l.id, sublabel: l.type || '' };
 }
 
+function _speciesOption(s) {
+  return { value: s.id, label: s.name || s.id, sublabel: '' };
+}
+
 const SOURCES = {
   character: (excludeId) => {
     const all = Store.getCharacters().filter(c => !excludeId || c.id !== excludeId);
     return _sortChars(all).map(_charOption);
   },
   location: () => Store.getLocations().map(_locOption),
+  species:  () => [...Store.getSpecies()]
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'cs'))
+    .map(_speciesOption),
 };
 
 function _resolveOptions(source, excludeId) {
@@ -86,7 +93,17 @@ function _createInline(source, name) {
     });
     return id;
   }
+  if (source === 'species') {
+    Store.saveSpecies({ id, name: trimmed, description: '' });
+    return id;
+  }
   return null;
+}
+
+function _createKindLabel(source) {
+  if (source === 'location') return 'místo';
+  if (source === 'species')  return 'druh';
+  return 'postavu';
 }
 
 // ── Combobox (single-select, searchable) ────────────────────────
@@ -152,7 +169,7 @@ function _mountCombobox(el) {
     const q = norm(typed);
     const exact = options.some(o => norm(o.label) === q);
     if (exact) return '';
-    const kind = onCreate === 'location' ? 'místo' : 'postavu';
+    const kind = _createKindLabel(onCreate);
     return `<div class="w-cb-create" data-create="${esc(typed)}" role="option">
       ✦ Vytvořit ${esc(kind)} «${esc(typed)}»
     </div>`;
@@ -340,7 +357,7 @@ function _mountMultiSelect(el) {
     const q = norm(typed);
     const exact = options.some(o => norm(o.label) === q);
     if (exact) return '';
-    const kind = onCreate === 'location' ? 'místo' : 'postavu';
+    const kind = _createKindLabel(onCreate);
     return `<div class="w-ms-create" data-create="${esc(typed)}" role="option">
       ✦ Vytvořit ${esc(kind)} «${esc(typed)}»
     </div>`;

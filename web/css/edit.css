@@ -533,3 +533,70 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
 .edit-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .edit-toast.ok   { border-color: rgba(46,125,50,0.5);  color: #a5d6a7; }
 .edit-toast.err  { border-color: rgba(139,0,0,0.5);    color: #ef9a9a; }
+
+/* ── Markdown view + edit preview ─────────────────────────────── */
+.md-view p:first-child,
+.md-edit-preview p:first-child { margin-top: 0; }
+.md-view p:last-child,
+.md-edit-preview p:last-child { margin-bottom: 0; }
+.md-view h1, .md-view h2, .md-view h3,
+.md-edit-preview h1, .md-edit-preview h2, .md-edit-preview h3 {
+  margin: 1.1em 0 0.5em; line-height: 1.25;
+}
+.md-view ul, .md-view ol,
+.md-edit-preview ul, .md-edit-preview ol { padding-left: 1.5em; }
+.md-view blockquote,
+.md-edit-preview blockquote {
+  margin: 0.75em 0;
+  padding: 0.25em 0.9em;
+  border-left: 3px solid rgba(200,160,64,0.5);
+  color: var(--text-muted);
+  background: rgba(200,160,64,0.06);
+}
+.md-view code,
+.md-edit-preview code {
+  font-family: monospace;
+  background: rgba(255,255,255,0.06);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+.md-view pre,
+.md-edit-preview pre {
+  background: rgba(0,0,0,0.35);
+  padding: 0.6em 0.9em;
+  border-radius: var(--radius);
+  overflow-x: auto;
+}
+.md-view a,
+.md-edit-preview a { color: var(--accent-gold); }
+
+/* ── Markdown editor: Zápis/Náhled tabs ───────────────────────── */
+.md-edit { display: flex; flex-direction: column; }
+.md-edit-tabs {
+  display: flex; gap: 0.25rem; margin-bottom: 0.25rem;
+}
+.md-tab {
+  background: transparent;
+  border: 1px solid rgba(200,160,64,0.25);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+}
+.md-tab.active {
+  background: rgba(200,160,64,0.15);
+  color: var(--text-parchment);
+  border-color: rgba(200,160,64,0.5);
+}
+.md-edit-preview {
+  min-height: 4em;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--text-parchment);
+}

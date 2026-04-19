@@ -1,4 +1,7 @@
-import { FACTIONS, STATUS, CHARACTERS, LOCATIONS, EVENTS, RELATIONSHIPS, MYSTERIES, MAP_PINS } from './data.js';
+import {
+  FACTIONS, STATUS, CHARACTERS, LOCATIONS, EVENTS, RELATIONSHIPS, MYSTERIES, MAP_PINS,
+  SPECIES, PANTHEON, ARTIFACTS, ARTIFACT_STATES,
+} from './data.js';
 import { norm } from './utils.js';
 
 export const Store = (() => {
@@ -108,6 +111,9 @@ export const Store = (() => {
       mysteries:     JSON.parse(JSON.stringify(MYSTERIES)),
       mapPins:       JSON.parse(JSON.stringify(MAP_PINS)),
       factions:      JSON.parse(JSON.stringify(FACTIONS)),
+      species:       JSON.parse(JSON.stringify(SPECIES)),
+      pantheon:      JSON.parse(JSON.stringify(PANTHEON)),
+      artifacts:     JSON.parse(JSON.stringify(ARTIFACTS)),
     };
   }
 
@@ -126,6 +132,33 @@ export const Store = (() => {
         if (!_data.factions[id]) _data.factions[id] = JSON.parse(JSON.stringify(fac));
       }
     }
+    // Seed species/pantheon/artifacts for fresh installs.
+    if (!Array.isArray(_data.species))   _data.species   = [];
+    if (!Array.isArray(_data.pantheon))  _data.pantheon  = [];
+    if (!Array.isArray(_data.artifacts)) _data.artifacts = [];
+    const seedIds = new Set(_data.species.map(s => s.id));
+    for (const s of SPECIES) {
+      if (!seedIds.has(s.id) && !deleted.has(s.id)) {
+        _data.species.push(JSON.parse(JSON.stringify(s)));
+      }
+    }
+  }
+
+  // ── One-shot `captured` status migration ──────────────────────
+  // Narrowed status enum to alive/dead/unknown; old `captured`
+  // characters become alive + circumstances="Zajatý/á" so the
+  // information isn't lost. Idempotent — safe to re-run.
+  function _migrateCapturedStatus() {
+    if (!_data || !Array.isArray(_data.characters)) return false;
+    let changed = false;
+    for (const c of _data.characters) {
+      if (c.status === 'captured') {
+        c.status = 'alive';
+        if (!c.circumstances) c.circumstances = 'Zajat/a';
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   async function load() {
@@ -138,7 +171,10 @@ export const Store = (() => {
           _data = serverData;
           _mergeDefaults();
           // One-shot legacy pins → locations migration. Re-saves if it did work.
-          if (_migrateMapPins()) _persist();
+          let mutated = false;
+          if (_migrateMapPins())        mutated = true;
+          if (_migrateCapturedStatus()) mutated = true;
+          if (mutated) _persist();
           _reindex();
           return;
         }
@@ -234,6 +270,13 @@ export const Store = (() => {
   function getFactions()      { init(); return _data.factions; }
   function getFaction(id)     { return getFactions()[id] || null; }
   function getStatusMap()     { return STATUS; }
+  function getSpecies()       { init(); return _data.species  || []; }
+  function getPantheon()      { init(); return _data.pantheon || []; }
+  function getArtifacts()     { init(); return _data.artifacts || []; }
+  function getSpeciesItem(id) { return getSpecies().find(s => s.id === id)  || null; }
+  function getBuh(id)         { return getPantheon().find(g => g.id === id) || null; }
+  function getArtifact(id)    { return getArtifacts().find(a => a.id === id) || null; }
+  function getArtifactStateMap() { return ARTIFACT_STATES; }
 
   // Locations with map coordinates set. `parentId=null` returns only
   // top-level places (on the world map). Pass a parentId to get the
@@ -360,6 +403,49 @@ export const Store = (() => {
     return _sync('mysteries', 'delete', { id });
   }
 
+  function saveSpecies(sp) {
+    init();
+    if (!Array.isArray(_data.species)) _data.species = [];
+    const idx = _data.species.findIndex(s => s.id === sp.id);
+    if (idx >= 0) _data.species[idx] = sp; else _data.species.push(sp);
+    return _sync('species', 'save', sp);
+  }
+  function deleteSpecies(id) {
+    init();
+    if (SPECIES.some(s => s.id === id)) {
+      if (!_data.deletedDefaults) _data.deletedDefaults = [];
+      if (!_data.deletedDefaults.includes(id)) _data.deletedDefaults.push(id);
+    }
+    _data.species = (_data.species || []).filter(s => s.id !== id);
+    return _sync('species', 'delete', { id });
+  }
+
+  function saveBuh(g) {
+    init();
+    if (!Array.isArray(_data.pantheon)) _data.pantheon = [];
+    const idx = _data.pantheon.findIndex(x => x.id === g.id);
+    if (idx >= 0) _data.pantheon[idx] = g; else _data.pantheon.push(g);
+    return _sync('pantheon', 'save', g);
+  }
+  function deleteBuh(id) {
+    init();
+    _data.pantheon = (_data.pantheon || []).filter(g => g.id !== id);
+    return _sync('pantheon', 'delete', { id });
+  }
+
+  function saveArtifact(a) {
+    init();
+    if (!Array.isArray(_data.artifacts)) _data.artifacts = [];
+    const idx = _data.artifacts.findIndex(x => x.id === a.id);
+    if (idx >= 0) _data.artifacts[idx] = a; else _data.artifacts.push(a);
+    return _sync('artifacts', 'save', a);
+  }
+  function deleteArtifact(id) {
+    init();
+    _data.artifacts = (_data.artifacts || []).filter(a => a.id !== id);
+    return _sync('artifacts', 'delete', { id });
+  }
+
   function saveFaction(id, fac) {
     init();
     _data.factions[id] = fac;
@@ -449,12 +535,39 @@ export const Store = (() => {
       _match(m.name, q) || _match((m.questions || []).join(' '), q) || _match((m.tags || []).join(' '), q)
     );
   }
+  function searchSpecies(query) {
+    init();
+    const q = norm(query);
+    if (!q) return (_data.species || []).slice();
+    return (_data.species || []).filter(s =>
+      _match(s.name, q) || _match(s.description, q)
+    );
+  }
+  function searchPantheon(query) {
+    init();
+    const q = norm(query);
+    if (!q) return (_data.pantheon || []).slice();
+    return (_data.pantheon || []).filter(g =>
+      _match(g.name, q) || _match(g.domain, q) || _match((g.tags || []).join(' '), q)
+    );
+  }
+  function searchArtifacts(query) {
+    init();
+    const q = norm(query);
+    if (!q) return (_data.artifacts || []).slice();
+    return (_data.artifacts || []).filter(a =>
+      _match(a.name, q) || _match(a.description, q) || _match((a.tags || []).join(' '), q)
+    );
+  }
   function searchAll(query) {
     return {
       characters: searchCharacters(query),
       locations:  searchLocations(query),
       events:     searchEvents(query),
       mysteries:  searchMysteries(query),
+      species:    searchSpecies(query),
+      pantheon:   searchPantheon(query),
+      artifacts:  searchArtifacts(query),
     };
   }
 
@@ -527,11 +640,14 @@ export const Store = (() => {
     getCharacters, getRelationships, getLocations, getEvents, getMysteries,
     getMapPins, getFactions, getFaction, getStatusMap,
     getCharacter, getLocation, getEvent, getMystery,
+    getSpecies, getPantheon, getArtifacts,
+    getSpeciesItem, getBuh, getArtifact, getArtifactStateMap,
     getLocationsOnMap, getSubLocations, getAncestorLocations,
     getCharactersByFaction, getCharactersInLocation, getRelationshipsFor,
     getEventsWithCharacter, getEventsAtLocation, getMysteriesWithCharacter,
     getPinForLocation,
-    searchCharacters, searchLocations, searchEvents, searchMysteries, searchAll,
+    searchCharacters, searchLocations, searchEvents, searchMysteries,
+    searchSpecies, searchPantheon, searchArtifacts, searchAll,
     saveCharacter, deleteCharacter,
     saveRelationship, deleteRelationship,
     saveLocation, deleteLocation,
@@ -539,6 +655,9 @@ export const Store = (() => {
     saveMystery, deleteMystery,
     saveMapPin, deleteMapPin,
     saveFaction, deleteFaction,
+    saveSpecies, deleteSpecies,
+    saveBuh, deleteBuh,
+    saveArtifact, deleteArtifact,
     generateId, reset, exportJS, exportJSON, importJSON,
   };
 })();

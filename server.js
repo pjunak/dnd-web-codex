@@ -113,16 +113,22 @@ function _broadcastDataChanged() {
 const ALLOWED_TYPES = new Set([
   'characters', 'relationships', 'locations', 'events',
   'mysteries', 'mapPins', 'factions', 'deletedDefaults',
+  'species', 'pantheon', 'artifacts',
 ]);
 const ALLOWED_REL_TYPES = new Set([
   'commands', 'ally', 'enemy', 'mission', 'mystery',
   'captured_by', 'history', 'uncertain', 'negotiates',
 ]);
-const ALLOWED_CHAR_STATUS = new Set(['alive', 'dead', 'captured', 'unknown']);
+// Narrowed: `captured` was folded into a free-text `circumstances` field.
+// Old data is migrated client-side (Store._migrateCapturedStatus).
+const ALLOWED_CHAR_STATUS = new Set(['alive', 'dead', 'unknown']);
+const ALLOWED_ARTIFACT_STATES = new Set([
+  'nalezen', 'u_postavy', 'strezeny', 'skryty', 'ztraceny', 'zniceny',
+]);
 
 app.get('/api/data', (_req, res) => {
   try {
-    const types    = ['characters', 'relationships', 'locations', 'events', 'mysteries', 'mapPins', 'factions', 'deletedDefaults'];
+    const types    = ['characters', 'relationships', 'locations', 'events', 'mysteries', 'mapPins', 'factions', 'deletedDefaults', 'species', 'pantheon', 'artifacts'];
     const campaign = {};
     let foundAny   = false;
     for (const t of types) {
@@ -192,6 +198,10 @@ app.patch('/api/data', requireAuth, (req, res) => {
     if (action === 'save' && type === 'characters' && payload && payload.status
         && !ALLOWED_CHAR_STATUS.has(payload.status)) {
       return res.status(400).json({ error: `Unknown character status: ${payload.status}` });
+    }
+    if (action === 'save' && type === 'artifacts' && payload && payload.state
+        && !ALLOWED_ARTIFACT_STATES.has(payload.state)) {
+      return res.status(400).json({ error: `Unknown artifact state: ${payload.state}` });
     }
 
     const p = getFile(type);

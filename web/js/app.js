@@ -112,6 +112,18 @@ window.Admin = Admin;
         if (sub) Wiki.renderPage("frakce-id", sub);
         else     Wiki.renderPage("frakce");
         break;
+      case "druhy":
+        Wiki.renderPage("druhy"); break;
+      case "druh":
+        Wiki.renderPage("druh", sub); break;
+      case "panteon":
+        Wiki.renderPage("panteon"); break;
+      case "buh":
+        Wiki.renderPage("buh", sub); break;
+      case "artefakty":
+        Wiki.renderPage("artefakty"); break;
+      case "artefakt":
+        Wiki.renderPage("artefakt", sub); break;
       case "admin":
         Admin.render(); break;
       default:
