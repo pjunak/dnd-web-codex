@@ -220,29 +220,31 @@
 }
 .tl-card-desc {
   font-family: var(--font-ui);
-  font-size: 0.7rem;
-  line-height: 1.4;
-  color: rgba(212,196,154,0.75);
-  margin-bottom: 5px;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: rgba(212,196,154,0.78);
+  margin-bottom: 6px;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 5;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 .tl-card-meta {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 .tl-card-chars,
 .tl-card-loc {
   font-family: var(--font-ui);
-  font-size: 0.66rem;
-  line-height: 1.4;
+  font-size: 0.68rem;
+  line-height: 1.45;
   color: var(--text-muted);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
 }
 .tl-card-loc   { color: rgba(130,180,130,0.8); }
 .tl-more       { opacity: 0.55; }
