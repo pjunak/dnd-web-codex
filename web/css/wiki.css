@@ -325,40 +325,54 @@
   font-size: 3.5rem;
 }
 
-/* ── Wiki single-column article layout ────────────────────────
-   Head panel (visual + meta) at the top, then structured data
-   sections (chips, facts, open questions, links), then the
-   markdown article body at the bottom. Keeps the "article-as-
-   article" feeling — data first, narrative last.                */
+/* ── Wiki article layout ────────────────────────────────────
+   Two-column grid: sticky left sidebar (portrait/icon card +
+   document outline) + main column (structured sections first,
+   then the markdown article body). The main column keeps its
+   previous max-width of ~1100 px; the sidebar slides in to
+   the left of whatever horizontal room the page already had,
+   rather than compressing the narrative.                      */
 .wiki-article {
-  max-width: 1100px;
+  display: grid;
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1100px);
+  gap: 2rem;
+  justify-content: center;   /* centre both columns as a pair */
   margin: 0 auto;
+  align-items: start;
 }
 .wiki-article > :first-child { margin-top: 0; }
+@media (max-width: 1100px) {
+  .wiki-article { grid-template-columns: 1fr; }
+}
 
-/* ── Article head panel: visual (portrait/icon) + identity ──── */
-.article-head {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: 1.5rem;
-  margin-bottom: 1.5rem;
-  padding: 1.25rem;
+/* ── Left sidebar: info card + outline ──────────────────────── */
+.wiki-side {
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+@media (max-width: 1100px) {
+  .wiki-side { position: static; max-height: none; overflow: visible; }
+}
+
+/* Info card — visual (portrait or icon) + identity + chips + facts */
+.wiki-side-card {
   background: var(--bg-raised);
   border: 1px solid rgba(212,184,122,0.15);
   border-radius: 10px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
   box-shadow: 0 2px 6px rgba(0,0,0,0.25);
 }
-.article-head.no-visual { grid-template-columns: 1fr; }
-@media (max-width: 700px) {
-  .article-head { grid-template-columns: 1fr; }
-}
-
-/* Visual column — portrait or big icon */
-.ah-visual {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-}
+.ah-visual { display: flex; justify-content: center; }
 .ah-visual .portrait-wrap {
   width: 100%;
   aspect-ratio: 3 / 4;
@@ -384,48 +398,93 @@
   background: rgba(0,0,0,0.25);
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
-
-/* Meta column — name, subtitle, badges, profile chips, facts */
-.ah-meta { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+.ah-meta { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
 .ah-meta h1 {
   font-family: var(--font-title);
-  font-size: 2.2rem;
+  font-size: 1.5rem;
   color: var(--accent-gold);
   margin: 0;
-  line-height: 1.15;
+  line-height: 1.2;
+  word-wrap: break-word;
 }
 .ah-subtitle {
   font-family: var(--font-body);
   font-style: italic;
   color: var(--text-muted);
-  font-size: 1rem;
-  margin-top: -0.35rem;
+  font-size: 0.92rem;
+  margin-top: -0.25rem;
 }
-.ah-chips { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.ah-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .ah-facts {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 0.4rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
   margin-top: 0.25rem;
 }
-.ah-fact { font-size: 0.88rem; color: var(--text-parchment); min-width: 0; }
+.ah-fact { font-size: 0.85rem; color: var(--text-parchment); min-width: 0; }
 .ah-fact-label {
   font-family: var(--font-title);
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--accent-gold-dim);
   display: block;
   margin-bottom: 0.15rem;
 }
-.ah-fact a { color: var(--text-parchment); text-decoration: none; }
+.ah-fact a { color: var(--text-parchment); text-decoration: none; word-break: break-word; }
 .ah-fact a:hover { color: var(--accent-gold); }
-.ah-fact .relation-chip { font-size: 0.8rem; }
+.ah-fact .relation-chip { font-size: 0.78rem; }
 
-/* The actual markdown article body — comes at the end */
+/* Document outline / TOC — generated from markdown headings */
+.wiki-outline {
+  background: var(--bg-raised);
+  border: 1px solid rgba(212,184,122,0.15);
+  border-radius: 10px;
+  padding: 0.75rem 1rem 1rem;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+}
+.wiki-outline-title {
+  font-family: var(--font-title);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent-gold-dim);
+  margin-bottom: 0.6rem;
+}
+.wiki-outline ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.wiki-outline li a {
+  display: block;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  color: var(--text-parchment);
+  font-size: 0.85rem;
+  text-decoration: none;
+  line-height: 1.35;
+  transition: background 0.12s, color 0.12s;
+}
+.wiki-outline li a:hover {
+  background: rgba(200,160,64,0.1);
+  color: var(--accent-gold);
+}
+.wiki-outline li[data-lvl="2"] a { padding-left: 1.2rem; font-size: 0.82rem; color: var(--text-muted); }
+.wiki-outline li[data-lvl="3"] a { padding-left: 2rem;   font-size: 0.78rem; color: var(--text-muted); }
+
+/* ── Main column ─────────────────────────────────────────────── */
+.wiki-main { min-width: 0; }
+
+/* Article body — the markdown narrative. Sits below structured
+   sections. In the new layout the body already has breathing
+   room from the outline/sidebar, so no heavy top divider. */
 .article-body {
-  margin-top: 2rem;
-  padding-top: 1.25rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
   border-top: 1px solid rgba(212,184,122,0.18);
   font-size: 0.95rem;
   color: var(--text-parchment);
@@ -433,6 +492,10 @@
 }
 .article-body h1,
 .article-body h2 { color: var(--accent-gold); }
+
+/* Scroll-margin so anchor jumps don't tuck headings under the
+   top edge — gives them a comfortable 1rem of breathing room. */
+.article-body :is(h1,h2,h3,h4,h5,h6) { scroll-margin-top: 1rem; }
 
 /* ── Character Article ──────────────────────────────────────── */
 .char-article { /* legacy — no longer constrains width; kept for back-compat */ }

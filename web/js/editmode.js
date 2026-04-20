@@ -671,123 +671,53 @@ export const EditMode = (() => {
     }
   }
 
-  // ── Markdown textarea preview toggle ──────────────────────────
-  // Tabs at the top of every `.md-edit` block switch between the raw
-  // textarea (Zápis) and a rendered preview (Náhled). The preview
-  // uses window.marked + DOMPurify via utils.renderMarkdown.
-  document.addEventListener('click', (ev) => {
-    const tab = ev.target.closest('.md-edit .md-tab');
-    if (!tab) return;
-    const wrap = tab.closest('.md-edit');
-    if (!wrap) return;
-    const mode = tab.dataset.mdTab;
-    wrap.querySelectorAll('.md-tab').forEach(t => t.classList.toggle('is-active', t === tab));
-    const ta  = wrap.querySelector('.md-edit-ta');
-    const pv  = wrap.querySelector('.md-edit-preview');
-    if (!ta || !pv) return;
-    if (mode === 'preview') {
-      pv.innerHTML = renderMarkdown(ta.value);
-      pv.hidden = false;
-      ta.hidden = true;
-    } else {
-      pv.hidden = true;
-      ta.hidden = false;
-      ta.focus();
-    }
-  });
-  // Recompute preview live if the user types while preview is visible.
-  function onMdInput(id) {
-    const ta = document.getElementById(id);
-    const pv = document.getElementById(id + '__preview');
-    if (!ta || !pv || pv.hidden) return;
-    pv.innerHTML = renderMarkdown(ta.value);
-  }
-
-  // ── Markdown toolbar command ────────────────────────────────────
-  // Wraps/prefixes the current selection with markdown syntax.
-  // If no selection, inserts a placeholder and selects it so the
-  // next keystroke replaces it.
-  function mdCmd(id, cmd) {
-    const ta = document.getElementById(id);
-    if (!ta) return;
-    if (ta.hidden) {
-      // Switch back to write mode first, then apply.
-      const wrap = ta.closest('.md-edit');
-      wrap?.querySelector('.md-tab[data-md-tab="write"]')?.click();
-    }
-    const start = ta.selectionStart, end = ta.selectionEnd;
-    const before = ta.value.slice(0, start);
-    const sel    = ta.value.slice(start, end);
-    const after  = ta.value.slice(end);
-    let insert = '', selStart = 0, selEnd = 0;
-
-    const wrap = (open, close, placeholder) => {
-      const inner = sel || placeholder;
-      insert = open + inner + close;
-      selStart = before.length + open.length;
-      selEnd   = selStart + inner.length;
-    };
-    const prefixLines = (prefix, placeholder) => {
-      // Expand selection to cover whole lines so prefix applies per line.
-      const lineStart = before.lastIndexOf('\n') + 1;
-      const lineEnd   = end + (after.indexOf('\n') === -1 ? after.length : after.indexOf('\n'));
-      const headBefore = ta.value.slice(0, lineStart);
-      const block      = ta.value.slice(lineStart, lineEnd) || placeholder;
-      const tail       = ta.value.slice(lineEnd);
-      const prefixed = block.split('\n').map(l => prefix + l).join('\n');
-      ta.value = headBefore + prefixed + tail;
-      const pos = headBefore.length + prefixed.length;
-      ta.focus();
-      ta.setSelectionRange(headBefore.length + prefix.length, pos);
-      onMdInput(id);
-      return true;
-    };
-
-    switch (cmd) {
-      case 'bold':   wrap('**', '**', 'tučně');   break;
-      case 'italic': wrap('*',  '*',  'kurzíva'); break;
-      case 'code':
-        if (sel.includes('\n')) wrap('\n```\n', '\n```\n', 'kód');
-        else wrap('`', '`', 'kód');
-        break;
-      case 'link': {
-        const url = prompt('Odkaz URL:', 'https://');
-        if (url == null) return;
-        wrap('[', `](${url})`, sel || 'text');
-        break;
+  // ── EasyMDE mount ─────────────────────────────────────────────
+  // Any <textarea class="md-easy"> rendered by edit templates gets
+  // upgraded to a CodeMirror-backed EasyMDE instance on next
+  // Widgets.mountAll pass. `forceSync:true` keeps the underlying
+  // <textarea>'s `.value` in sync on every keystroke, so existing
+  // save code reading `document.getElementById(id).value` just works.
+  // Preview goes through our sanitized renderMarkdown (marked+DOMPurify).
+  function mountEasyMDE(root) {
+    const scope = root || document;
+    if (typeof window.EasyMDE !== 'function') return;
+    const tas = scope.querySelectorAll('textarea.md-easy:not([data-md-mounted])');
+    tas.forEach(ta => {
+      ta.setAttribute('data-md-mounted', '1');
+      try {
+        const mde = new EasyMDE({
+          element: ta,
+          forceSync: true,
+          spellChecker: false,
+          autofocus: false,
+          status: ['lines', 'words'],
+          minHeight: '320px',
+          placeholder: ta.getAttribute('placeholder') || '',
+          previewRender: (txt) => renderMarkdown(txt),
+          toolbar: [
+            'bold', 'italic', 'strikethrough', '|',
+            'heading-1', 'heading-2', 'heading-3', '|',
+            'quote', 'unordered-list', 'ordered-list', '|',
+            'link', 'image', 'table', 'code', 'horizontal-rule', '|',
+            'preview', 'side-by-side', 'fullscreen', '|',
+            'undo', 'redo', '|',
+            'guide',
+          ],
+          shortcuts: {
+            toggleBold:          'Ctrl-B',
+            toggleItalic:        'Ctrl-I',
+            drawLink:            'Ctrl-K',
+            toggleHeadingSmaller:'Ctrl-H',
+            togglePreview:       'Ctrl-P',
+            toggleSideBySide:    'F9',
+            toggleFullScreen:    'F11',
+          },
+        });
+        ta._easymde = mde;
+      } catch (e) {
+        console.warn('EasyMDE mount failed', e);
       }
-      case 'h2':    if (prefixLines('## ',  'Nadpis'))    return; break;
-      case 'h3':    if (prefixLines('### ', 'Podnadpis')) return; break;
-      case 'list':  if (prefixLines('- ',   'položka'))   return; break;
-      case 'olist': if (prefixLines('1. ',  'položka'))   return; break;
-      case 'quote': if (prefixLines('> ',   'citace'))    return; break;
-      case 'hr':
-        // Insert standalone horizontal rule on its own line.
-        insert = (before.endsWith('\n') || before === '' ? '' : '\n') + '\n---\n\n';
-        selStart = selEnd = before.length + insert.length;
-        ta.value = before + insert + after;
-        ta.focus();
-        ta.setSelectionRange(selStart, selEnd);
-        onMdInput(id);
-        return;
-      default: return;
-    }
-
-    ta.value = before + insert + after;
-    ta.focus();
-    ta.setSelectionRange(selStart, selEnd);
-    onMdInput(id);
-  }
-
-  // Keyboard shortcuts inside markdown textareas.
-  function onMdKey(ev, id) {
-    if (!(ev.ctrlKey || ev.metaKey) || ev.shiftKey || ev.altKey) return;
-    const k = ev.key.toLowerCase();
-    const map = { b: 'bold', i: 'italic', k: 'link' };
-    const cmd = map[k];
-    if (!cmd) return;
-    ev.preventDefault();
-    mdCmd(id, cmd);
+    });
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -909,7 +839,7 @@ export const EditMode = (() => {
     saveSpecies, deleteSpecies,
     saveBuh, deleteBuh,
     saveArtifact, deleteArtifact,
-    onMdInput, mdCmd, onMdKey,
+    mountEasyMDE,
     renderCharacterEditor,
     renderLocationEditor,
     renderEventEditor,

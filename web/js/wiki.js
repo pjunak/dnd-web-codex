@@ -6,7 +6,7 @@
 
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
-import { norm, esc, renderMarkdown } from './utils.js';
+import { norm, esc, renderMarkdown, extractOutline } from './utils.js';
 import { PIN_TYPES } from './map.js';
 
 export const Wiki = (() => {
@@ -159,7 +159,9 @@ export const Wiki = (() => {
   // wiki convention: facts up front, prose at the bottom.
   function _articleShell({
     visual = null, title = '', subtitle = '',
-    chips = [], facts = [], sections = [], body = '', back = true,
+    chips = [], facts = [], sections = [], body = '',
+    outlineSource = '',           // raw markdown used to build the TOC
+    back = true,
   }) {
     const chipsHtml = (chips || []).filter(Boolean).join('');
     const factsHtml = (facts || []).filter(f => f && f.value).map(f =>
@@ -174,8 +176,8 @@ export const Wiki = (() => {
         </div>`;
     }).join('');
 
-    const head = `
-      <div class="article-head${visual ? '' : ' no-visual'}">
+    const sideCard = `
+      <div class="wiki-side-card">
         ${visual ? `<div class="ah-visual">${visual}</div>` : ''}
         <div class="ah-meta">
           <h1>${title}</h1>
@@ -185,12 +187,30 @@ export const Wiki = (() => {
         </div>
       </div>`;
 
+    // Auto-generated outline from markdown headings in the article body.
+    // Hidden when empty so short articles don't get a stub box.
+    const outline = outlineSource ? extractOutline(outlineSource) : [];
+    const outlineHtml = outline.length ? `
+      <nav class="wiki-outline" aria-label="Obsah článku">
+        <div class="wiki-outline-title">Obsah</div>
+        <ul>
+          ${outline.map(h =>
+            `<li data-lvl="${h.level}"><a href="#${h.slug}" onclick="document.getElementById('${h.slug}')?.scrollIntoView({behavior:'smooth',block:'start'});event.preventDefault()">${esc(h.text)}</a></li>`
+          ).join('')}
+        </ul>
+      </nav>` : '';
+
     return `
       ${back ? `<button class="back-btn" onclick="history.back()">← Zpět</button>` : ''}
       <div class="wiki-article">
-        ${head}
-        ${sectionsHtml}
-        ${body ? `<div class="article-body">${body}</div>` : ''}
+        <aside class="wiki-side">
+          ${sideCard}
+          ${outlineHtml}
+        </aside>
+        <div class="wiki-main">
+          ${sectionsHtml}
+          ${body ? `<div class="article-body">${body}</div>` : ''}
+        </div>
       </div>`;
   }
 
@@ -492,6 +512,7 @@ export const Wiki = (() => {
                                                 ? _factListHtml(c.unknown, 'unknown-item') : '' },
       ],
       body,
+      outlineSource: c.knowledge >= 2 ? c.description : '',
     });
   }
 
@@ -712,6 +733,7 @@ export const Wiki = (() => {
         <div class="md-view">${renderMarkdown(l.description)}</div>
         ${l.notes ? `<div class="location-note md-view">${renderMarkdown(l.notes)}</div>` : ''}
       `,
+      outlineSource: l.description || '',
     });
   }
 
@@ -753,6 +775,7 @@ export const Wiki = (() => {
         { title: 'Zúčastněné postavy', html: chars ? `<div class="relation-chips">${chars}</div>` : '' },
         { title: 'Místa',              html: locs  ? `<div class="relation-chips">${locs}</div>`  : '' },
       ],
+      outlineSource: e.description || '',
       body: `
         ${e.short ? `<div class="location-note md-view">${esc(e.short)}</div>` : ''}
         <div class="md-view">${renderMarkdown(e.description)}</div>
@@ -840,6 +863,7 @@ export const Wiki = (() => {
           ? `<div class="fact-list">${m.clues.map(c => `<div class="fact-item">${esc(c)}</div>`).join('')}</div>` : '' },
         { title: 'Spojené postavy', html: charChips ? `<div class="relation-chips">${charChips}</div>` : '' },
       ],
+      outlineSource: m.description || '',
       body: `
         <div class="md-view">${renderMarkdown(m.description)}</div>
         <div style="margin-top:1.5rem">
@@ -1013,6 +1037,7 @@ export const Wiki = (() => {
           ? `<div class="relation-chips">${unchained.map(c => `<a class="relation-chip" href="#/postava/${c.id}">${esc(c.name)}</a>`).join('')}</div>`
           : '' },
       ],
+      outlineSource: f.description || '',
       body: `
         ${f.description ? `<div class="md-view">${renderMarkdown(f.description)}</div>` : ''}
         <div style="margin-top:1.5rem">
@@ -1180,6 +1205,7 @@ export const Wiki = (() => {
         { title: 'Postavy tohoto druhu', html: charChips },
       ],
       body: `<div class="md-view">${renderMarkdown(s.description)}</div>`,
+      outlineSource: s.description || '',
     });
   }
 
@@ -1224,6 +1250,7 @@ export const Wiki = (() => {
         { label: 'Zaměření', value: g.alignment ? esc(g.alignment) : '' },
       ],
       body: `<div class="md-view">${renderMarkdown(g.description)}</div>`,
+      outlineSource: g.description || '',
     });
   }
 
@@ -1276,6 +1303,7 @@ export const Wiki = (() => {
         { label: 'Umístění',  value: loc   ? `<a class="relation-chip" href="#/misto/${loc.id}">📍 ${esc(loc.name)}</a>` : '' },
       ],
       body: `<div class="md-view">${renderMarkdown(a.description)}</div>`,
+      outlineSource: a.description || '',
     });
   }
 

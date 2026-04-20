@@ -650,43 +650,18 @@ export const EditTemplates = (() => {
   // Markdown-enabled textarea with a 👁 Náhled preview toggle.
   // Consumed by every long-description field so GMs can write wiki-style
   // articles with headings, lists, links, bold/italic, etc.
+  // Markdown-enabled textarea. EasyMDE upgrades it after mount
+  // (see EditMode._mountEasyMDE). With `forceSync:true`, every
+  // keystroke mirrors back into this <textarea>, so existing save
+  // code reading `document.getElementById(id).value` keeps working.
   function _mdTextarea(id, value, rows = 6, placeholder = '') {
     const v   = value == null ? '' : value;
     const eid = _esc(id);
-    const btn = (cmd, icon, title) =>
-      `<button type="button" class="md-btn" title="${_esc(title)}" onclick="EditMode.mdCmd('${eid}','${cmd}')">${icon}</button>`;
     return `
-      <div class="md-edit" data-md-for="${id}">
-        <div class="md-edit-toolbar">
-          <div class="md-btn-group">
-            ${btn('bold',   '<b>B</b>',       'Tučně (Ctrl+B)')}
-            ${btn('italic', '<i>I</i>',       'Kurzíva (Ctrl+I)')}
-          </div>
-          <div class="md-btn-group">
-            ${btn('h2',     'H2',             'Nadpis')}
-            ${btn('h3',     'H3',             'Podnadpis')}
-          </div>
-          <div class="md-btn-group">
-            ${btn('list',   '• List',         'Seznam s odrážkami')}
-            ${btn('olist',  '1. List',        'Číslovaný seznam')}
-            ${btn('quote',  '❝',              'Citace')}
-          </div>
-          <div class="md-btn-group">
-            ${btn('link',   '🔗',             'Odkaz')}
-            ${btn('code',   '&lt;/&gt;',      'Kód')}
-            ${btn('hr',     '—',              'Vodorovná čára')}
-          </div>
-          <div class="md-edit-tabs">
-            <button type="button" class="md-tab is-active" data-md-tab="write">✎ Zápis</button>
-            <button type="button" class="md-tab" data-md-tab="preview">👁 Náhled</button>
-          </div>
-        </div>
-        <textarea class="edit-textarea md-edit-ta" id="${eid}"
-          rows="${rows}" placeholder="${_esc(placeholder)}"
-          oninput="EditMode.onMdInput('${eid}')"
-          onkeydown="EditMode.onMdKey(event, '${eid}')">${_esc(v)}</textarea>
-        <div class="md-edit-preview" id="${eid}__preview" hidden></div>
-      </div>`;
+      <textarea class="md-easy"
+        id="${eid}"
+        rows="${rows}"
+        placeholder="${_esc(placeholder)}">${_esc(v)}</textarea>`;
   }
 
   // ── Species editor ─────────────────────────────────────────────

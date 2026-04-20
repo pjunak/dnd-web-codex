@@ -32,10 +32,46 @@ export function debounce(fn, ms = 120) {
   };
 }
 
+/** Diacritic-insensitive slug. Used to build stable heading IDs for
+ *  the article outline (TOC) so anchor links survive small edits
+ *  as long as the human-readable heading text is unchanged.        */
+export function slugify(s) {
+  return String(s ?? '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .slice(0, 80);
+}
+
+/** Scan raw markdown for ATX headings (# .. ###) and return an
+ *  array of { level, text, slug } entries. Heading IDs in the
+ *  rendered HTML match these slugs, so anchors link up cleanly. */
+export function extractOutline(src) {
+  const text = String(src ?? '');
+  if (!text) return [];
+  const out = [];
+  for (const line of text.split('\n')) {
+    const m = /^(#{1,3})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (!m) continue;
+    out.push({
+      level: m[1].length,
+      text:  m[2].trim(),
+      slug:  slugify(m[2].trim()),
+    });
+  }
+  return out;
+}
+
 /**
  * Render Markdown to sanitized HTML for long-description fields.
  * Uses vendored marked + DOMPurify (loaded globally from index.html).
  * Falls back to escaped + <br>-joined text if libs aren't loaded yet.
+ *
+ * Post-processes the output to add `id` attributes onto h1..h6
+ * elements (matching `slugify(heading)`), so the sidebar outline
+ * links can jump to sections.
  */
 export function renderMarkdown(src) {
   const text = String(src ?? '');
@@ -48,10 +84,17 @@ export function renderMarkdown(src) {
   const html = typeof marked.parse === 'function'
     ? marked.parse(text, { breaks: true, gfm: true })
     : marked(text, { breaks: true, gfm: true });
-  return purify.sanitize(html, {
-    ADD_ATTR: ['target', 'rel'],
+  const sanitized = purify.sanitize(html, {
+    ADD_ATTR: ['target', 'rel', 'id'],
     FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed'],
   });
+  if (typeof document === 'undefined') return sanitized;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = sanitized;
+  tmp.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+    if (!h.id) h.id = slugify(h.textContent || '');
+  });
+  return tmp.innerHTML;
 }
 
 /** Toast notification — reuses #app-toast singleton across all callers. */

@@ -578,9 +578,9 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
    so the GM can write long-form wiki prose without a narrow,
    cramped box. Collapses to single column below 1100 px.       */
 .edit-form-split {
-  max-width: 1500px;
+  max-width: 1800px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr);
   gap: 1.5rem 2rem;
 }
 .edit-form-split-header {
@@ -593,103 +593,144 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
   top: 1rem;
   align-self: start;
 }
-.edit-form-split-article .md-edit {
-  height: calc(100vh - 6rem);
-  min-height: 420px;
+/* EasyMDE honours minHeight from JS options; override here so the
+   prose editor uses the full viewport height minus a small gutter. */
+.edit-form-split-article .EasyMDEContainer .CodeMirror,
+.edit-form-split-article .EasyMDEContainer .CodeMirror-scroll {
+  min-height: calc(100vh - 10rem);
 }
-.edit-form-split-article .md-edit-ta {
-  flex: 1;
-  min-height: 200px;
-  resize: vertical;
-}
-.edit-form-split-article .md-edit-preview {
-  max-height: none;
-  overflow-y: auto;
-  flex: 1;
+.edit-form-split-article .EasyMDEContainer .editor-preview,
+.edit-form-split-article .EasyMDEContainer .editor-preview-side {
+  min-height: calc(100vh - 10rem);
 }
 .edit-field-full { height: 100%; display: flex; flex-direction: column; }
-.edit-field-full .md-edit { flex: 1; }
-@media (max-width: 1100px) {
+@media (max-width: 1200px) {
   .edit-form-split { grid-template-columns: 1fr; }
   .edit-form-split-article { position: static; }
-  .edit-form-split-article .md-edit { height: auto; }
+  .edit-form-split-article .EasyMDEContainer .CodeMirror,
+  .edit-form-split-article .EasyMDEContainer .CodeMirror-scroll,
+  .edit-form-split-article .EasyMDEContainer .editor-preview,
+  .edit-form-split-article .EasyMDEContainer .editor-preview-side {
+    min-height: 400px;
+  }
 }
 
-/* ── Markdown editor: toolbar + Zápis/Náhled tabs ─────────────── */
-.md-edit { display: flex; flex-direction: column; }
-.md-edit-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  padding: 0.3rem 0.4rem;
-  background: rgba(0,0,0,0.25);
-  border: 1px solid rgba(200,160,64,0.2);
-  border-bottom: none;
-  border-radius: var(--radius) var(--radius) 0 0;
-  align-items: center;
-}
-.md-btn-group {
-  display: inline-flex;
-  gap: 0.15rem;
-  padding-right: 0.4rem;
-  border-right: 1px solid rgba(200,160,64,0.18);
-}
-.md-btn-group:last-of-type { border-right: none; }
-.md-btn {
-  min-width: 28px;
-  height: 26px;
-  padding: 0 0.4rem;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  color: var(--text-muted);
-  font-family: var(--font-ui);
-  font-size: 0.78rem;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.md-btn:hover {
-  background: rgba(200,160,64,0.12);
-  color: var(--accent-gold);
-  border-color: rgba(200,160,64,0.35);
-}
-.md-btn b { font-weight: 800; }
-.md-btn i { font-style: italic; }
-.md-edit-tabs {
-  display: flex;
-  gap: 0.2rem;
-  margin-left: auto;
-}
-.md-tab {
-  background: transparent;
-  border: 1px solid rgba(200,160,64,0.25);
-  color: var(--text-muted);
-  font-family: var(--font-ui);
-  font-size: 0.72rem;
-  padding: 0.3rem 0.75rem;
-  border-radius: 4px;
-  cursor: pointer;
-  letter-spacing: 0.04em;
-}
-.md-tab.is-active,
-.md-tab.active {
-  background: rgba(200,160,64,0.2);
+/* ── EasyMDE — dark theme overrides ───────────────────────────
+   The library ships a light theme by default. These rules
+   re-skin the toolbar, editor surface and preview to match the
+   parchment-on-dark palette used across the codex. Targets
+   EasyMDEContainer / editor-toolbar / CodeMirror / editor-preview
+   classes produced by easymde@2.18.               */
+.EasyMDEContainer {
+  background: var(--bg-raised);
+  border-radius: var(--radius);
   color: var(--text-parchment);
-  border-color: rgba(200,160,64,0.55);
 }
-.md-edit-ta {
-  border-top-left-radius: 0 !important;
-  border-top-right-radius: 0 !important;
+.EasyMDEContainer .editor-toolbar {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(200,160,64,0.25);
+  border-radius: var(--radius) var(--radius) 0 0;
+  opacity: 1;
 }
-.md-edit-preview {
-  min-height: 4em;
-  padding: 0.7rem 0.85rem;
-  border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 var(--radius) var(--radius);
+.EasyMDEContainer .editor-toolbar button {
+  color: var(--text-muted);
+  border-color: transparent;
+}
+.EasyMDEContainer .editor-toolbar button:hover,
+.EasyMDEContainer .editor-toolbar button.active {
+  background: rgba(200,160,64,0.15);
+  border-color: rgba(200,160,64,0.45);
+  color: var(--accent-gold);
+}
+.EasyMDEContainer .editor-toolbar i.separator {
+  border-left: 1px solid rgba(200,160,64,0.18);
+  border-right: 1px solid transparent;
+}
+.EasyMDEContainer .CodeMirror {
   background: var(--bg-raised);
   color: var(--text-parchment);
+  border: 1px solid rgba(200,160,64,0.25);
+  border-top: none;
+  border-radius: 0;
+  min-height: 320px;
+  padding: 0.4rem;
+  font-family: 'Lora', Georgia, serif;
+  font-size: 0.98rem;
+  line-height: 1.6;
+}
+.EasyMDEContainer .CodeMirror-cursor { border-left-color: var(--accent-gold); }
+.EasyMDEContainer .CodeMirror-selected { background: rgba(200,160,64,0.2); }
+/* Syntax colouring inside the editor — subtle hints, not loud. */
+.EasyMDEContainer .cm-header      { color: var(--accent-gold); font-weight: 700; }
+.EasyMDEContainer .cm-strong      { color: #ffd28a; }
+.EasyMDEContainer .cm-em          { color: #e6c787; font-style: italic; }
+.EasyMDEContainer .cm-link,
+.EasyMDEContainer .cm-url         { color: #90caf9; }
+.EasyMDEContainer .cm-quote       { color: #ce93d8; font-style: italic; }
+.EasyMDEContainer .cm-comment,
+.EasyMDEContainer .cm-formatting  { color: var(--text-muted); }
+.EasyMDEContainer .cm-variable-2  { color: #a5d6a7; }  /* list markers */
+
+.EasyMDEContainer .editor-statusbar {
+  color: var(--text-muted);
+  border: 1px solid rgba(200,160,64,0.2);
+  border-top: none;
+  background: rgba(0,0,0,0.15);
+  border-radius: 0 0 var(--radius) var(--radius);
+  padding: 0.25rem 0.75rem;
+}
+
+/* Preview pane — both inline preview and side-by-side */
+.EasyMDEContainer .editor-preview,
+.EasyMDEContainer .editor-preview-side {
+  background: var(--bg-raised);
+  color: var(--text-parchment);
+  border: 1px solid rgba(200,160,64,0.25);
+  padding: 0.9rem 1.1rem;
+  font-family: 'Lora', Georgia, serif;
+  font-size: 0.98rem;
+  line-height: 1.7;
+}
+.EasyMDEContainer .editor-preview h1,
+.EasyMDEContainer .editor-preview h2,
+.EasyMDEContainer .editor-preview h3,
+.EasyMDEContainer .editor-preview-side h1,
+.EasyMDEContainer .editor-preview-side h2,
+.EasyMDEContainer .editor-preview-side h3 { color: var(--accent-gold); }
+.EasyMDEContainer .editor-preview a,
+.EasyMDEContainer .editor-preview-side a { color: #90caf9; }
+.EasyMDEContainer .editor-preview blockquote,
+.EasyMDEContainer .editor-preview-side blockquote {
+  border-left: 3px solid rgba(200,160,64,0.5);
+  color: var(--text-muted);
+  background: rgba(200,160,64,0.06);
+  padding: 0.25em 0.9em;
+  margin: 0.75em 0;
+}
+.EasyMDEContainer .editor-preview code,
+.EasyMDEContainer .editor-preview-side code {
+  background: rgba(255,255,255,0.06);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+.EasyMDEContainer .editor-preview pre,
+.EasyMDEContainer .editor-preview-side pre {
+  background: rgba(0,0,0,0.35);
+  padding: 0.6em 0.9em;
+  border-radius: var(--radius);
+}
+
+/* Fullscreen mode — force the dark theme to win over EasyMDE's
+   .fullscreen overlay that otherwise reverts to white. */
+.EasyMDEContainer .editor-toolbar.fullscreen,
+.EasyMDEContainer .CodeMirror-fullscreen,
+.EasyMDEContainer .editor-preview-side.editor-preview-active-side {
+  background: var(--bg-raised);
+  color: var(--text-parchment);
+}
+
+/* Side-by-side: when active, the editor column should share the
+   dark surface rather than peeking through. */
+.EasyMDEContainer.sided--no-fullscreen .CodeMirror {
+  border-right: none;
 }
