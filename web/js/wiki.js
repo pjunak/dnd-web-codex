@@ -100,10 +100,18 @@ export const Wiki = (() => {
   // Czech-aware name compare. Falls back to default locale if `cs` not supported.
   const _czCompare = (a, b) => String(a||'').localeCompare(String(b||''), 'cs');
 
+  // Null-safe: renders an "unknown faction" chip when the id doesn't
+  // resolve to any faction (e.g. a character referencing a deleted
+  // faction, or a fresh install with no factions seeded yet).
   function factionBadge(factionId) {
-    const f = Store.getFactions()[factionId] || Store.getFactions().neutral;
+    const factions = Store.getFactions();
+    const f = factions[factionId] || factions.neutral;
+    if (!f) {
+      const label = factionId ? esc(factionId) : 'bez frakce';
+      return `<span class="badge badge-faction" style="background:#55555522;color:#999;border:1px solid #55555555">⚐ ${label}</span>`;
+    }
     return `<span class="badge badge-faction" style="background:${f.color}22;color:${f.textColor};border:1px solid ${f.color}55">
-      ${f.badge} ${f.name}</span>`;
+      ${f.badge} ${esc(f.name)}</span>`;
   }
 
   function statusBadge(statusId) {
@@ -128,7 +136,7 @@ export const Wiki = (() => {
     const factions  = Store.getFactions();
     const deadHtml  = c.status === "dead" ? `<div class="dead-overlay">💀</div>` : "";
     const imgHtml   = c.portrait
-      ? `<img class="portrait-img" src="${c.portrait}" alt="${c.name}" loading="lazy">`
+      ? `<img class="portrait-img" src="${esc(c.portrait)}" alt="${esc(c.name)}" loading="lazy">`
       : `<div class="portrait-placeholder">${factions[c.faction]?.badge || "👤"}</div>`;
     return `<div class="portrait-wrap${extraClass ? " "+extraClass : ""}" data-knowledge="${c.knowledge}" data-status="${c.status}">
       ${imgHtml}${deadHtml}
@@ -294,7 +302,7 @@ export const Wiki = (() => {
       <div class="mystery-list">
         ${mysteries.filter(m => m.priority === "kritická" || m.priority === "vysoká").map(m => `
           <div class="mystery-card">
-            <div class="mystery-name">❓ ${m.name}</div>
+            <div class="mystery-name">❓ ${esc(m.name)}</div>
             <div class="mystery-priority priority-${m.priority}">${m.priority.toUpperCase()}</div>
             <div class="mystery-desc md-view">${renderMarkdown(m.description)}</div>
           </div>`).join("")}
@@ -308,7 +316,7 @@ export const Wiki = (() => {
   // Party lives on /parta and is filtered out of /postavy, so it's
   // intentionally absent from the faction-sort order.
   const FACTION_ORDER = ["cult_high","cult_red","dragon","greenest","neutral","mystery"];
-  const STATUS_ORDER  = { alive: 0, captured: 1, unknown: 2, dead: 3 };
+  const STATUS_ORDER  = { alive: 0, unknown: 1, dead: 2 };
 
   // Apply current search + sort to the character list. `filterFaction` is
   // the faction filter-bar selection (orthogonal to text search).
@@ -374,7 +382,7 @@ export const Wiki = (() => {
       const count = allChars.filter(c => c.faction === id).length;
       if (count === 0) return "";
       return `<button class="filter-btn ${filterFaction === id ? "active" : ""}"
-        onclick="Wiki.renderPage('postavy','${id}')">${f.badge} ${f.name} (${count})</button>`;
+        onclick="Wiki.renderPage('postavy','${id}')">${f.badge} ${esc(f.name)} (${count})</button>`;
     }).join("");
 
     const shown = _postavyApply(filterFaction);
@@ -433,8 +441,8 @@ export const Wiki = (() => {
         ${portraitWrap(c)}
         ${overlay}
         <div class="char-card-info">
-          <div class="char-card-name">${c.knowledge >= 1 ? c.name : "???"}</div>
-          <div class="char-card-title">${c.knowledge >= 2 ? c.title : "Neznámá"}</div>
+          <div class="char-card-name">${c.knowledge >= 1 ? esc(c.name) : "???"}</div>
+          <div class="char-card-title">${c.knowledge >= 2 ? esc(c.title) : "Neznámá"}</div>
           <div class="char-card-badges">${statusBadge(c.status)}</div>
         </div>
       </a>
@@ -653,7 +661,7 @@ export const Wiki = (() => {
 
     const factions = Store.getFactions();
     const chars = Store.getCharactersInLocation(id).map(c =>
-      `<a class="relation-chip" href="#/postava/${c.id}">${factions[c.faction]?.badge || "👤"} ${c.name}</a>`
+      `<a class="relation-chip" href="#/postava/${c.id}">${factions[c.faction]?.badge || "👤"} ${esc(c.name)}</a>`
     ).join("");
 
     // Hierarchy: ancestor breadcrumb + sub-locations.
@@ -748,12 +756,12 @@ export const Wiki = (() => {
 
     const chars = (e.characters || []).map(cid => {
       const c = Store.getCharacter(cid);
-      return c ? `<a class="relation-chip" href="#/postava/${cid}">${c.name}</a>` : "";
+      return c ? `<a class="relation-chip" href="#/postava/${cid}">${esc(c.name)}</a>` : "";
     }).join("");
 
     const locs = (e.locations || []).map(lid => {
       const l = Store.getLocation(lid);
-      return l ? `<a class="relation-chip" href="#/misto/${lid}">📍 ${l.name}</a>` : "";
+      return l ? `<a class="relation-chip" href="#/misto/${lid}">📍 ${esc(l.name)}</a>` : "";
     }).join("");
 
     const sittingLabel = e.sitting ? `Sezení ${e.sitting}` : 'Dávná minulost';
@@ -810,7 +818,7 @@ export const Wiki = (() => {
             ? `<a class="list-edit-btn" href="#/zahada/${m.id}" title="Upravit" style="float:right;margin-left:0.5rem">✏</a>` : "";
           return `<div class="mystery-card">
             <div class="mystery-name" style="display:flex;align-items:center;justify-content:space-between">
-              <span>❓ ${m.name}</span>
+              <span>❓ ${esc(m.name)}</span>
               ${editBtn}
             </div>
             <div class="mystery-priority priority-${m.priority}">PRIORITA: ${m.priority.toUpperCase()}</div>
@@ -821,7 +829,7 @@ export const Wiki = (() => {
                 <div class="relation-chips">
                   ${m.characters.map(cid => {
                     const c = Store.getCharacter(cid);
-                    return c ? `<a class="relation-chip" href="#/postava/${cid}">${c.name}</a>` : "";
+                    return c ? `<a class="relation-chip" href="#/postava/${cid}">${esc(c.name)}</a>` : "";
                   }).join("")}
                 </div>
               </div>` : ""}
@@ -921,7 +929,7 @@ export const Wiki = (() => {
           ${ovl}
           <div class="faction-card-header" style="background:${f.color}22;border-bottom:1px solid ${f.color}33">
             <span class="faction-card-badge">${f.badge}</span>
-            <span class="faction-card-name" style="color:${f.textColor}">${f.name}</span>
+            <span class="faction-card-name" style="color:${f.textColor}">${esc(f.name)}</span>
           </div>
           <div class="faction-card-meta">
             <span>👤 ${memberCount} postav</span>

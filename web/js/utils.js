@@ -97,17 +97,3 @@ export function renderMarkdown(src) {
   return tmp.innerHTML;
 }
 
-/** Toast notification — reuses #app-toast singleton across all callers. */
-export function toast(msg, ok = true) {
-  let t = document.getElementById('app-toast');
-  if (!t) {
-    t = document.createElement('div');
-    t.id = 'app-toast';
-    t.className = 'app-toast';
-    document.body.appendChild(t);
-  }
-  t.textContent = msg;
-  t.className = 'app-toast show ' + (ok ? 'ok' : 'err');
-  clearTimeout(t._tid);
-  t._tid = setTimeout(() => t.classList.remove('show'), 2500);
-}
