@@ -74,6 +74,163 @@ export const EditMode = (() => {
     t._tid = setTimeout(() => t.classList.remove("show"), timeout);
   }
 
+  // ── Drafts & dirty-state guard ────────────────────────────────
+  // Every `.md-easy` textarea autosaves its markdown to localStorage
+  // on change (debounced 500ms + flushed on pagehide). If a draft is
+  // found on mount that differs from the loaded entity content, a
+  // banner above the editor offers [Obnovit koncept] / [Zahodit].
+  // Drafts are scoped per-textarea-id, so switching entities doesn't
+  // cross-contaminate. Successful save → _markClean() clears the
+  // dirty flag and removes drafts for every currently-mounted editor.
+  // Unguarded close/refresh triggers a browser beforeunload prompt;
+  // internal link clicks go through a capture listener that confirms
+  // if dirty.
+  const DRAFT_PREFIX  = 'md_draft:';
+  const DRAFT_DEBOUNCE_MS = 500;
+  const DRAFT_TTL_MS  = 30 * 24 * 60 * 60 * 1000;  // 30 days
+  let   _dirty        = false;
+  const _draftTimers  = new Map();    // textareaId → setTimeout id
+
+  function _draftKey(textareaId) { return DRAFT_PREFIX + textareaId; }
+
+  function _loadDraft(textareaId) {
+    try {
+      const raw = localStorage.getItem(_draftKey(textareaId));
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      if (!obj || typeof obj.content !== 'string') return null;
+      if (obj.savedAt && Date.now() - obj.savedAt > DRAFT_TTL_MS) {
+        localStorage.removeItem(_draftKey(textareaId));
+        return null;
+      }
+      return obj;
+    } catch { return null; }
+  }
+
+  function _saveDraft(textareaId, content) {
+    try {
+      localStorage.setItem(_draftKey(textareaId), JSON.stringify({
+        content, savedAt: Date.now(),
+      }));
+    } catch (_) { /* quota / disabled */ }
+  }
+
+  function _clearDraft(textareaId) {
+    try { localStorage.removeItem(_draftKey(textareaId)); } catch (_) {}
+  }
+
+  // Flush any pending debounced saves to localStorage. Called from
+  // pagehide so the last keystrokes aren't lost on tab close.
+  function _flushAllDrafts() {
+    for (const [id, timer] of _draftTimers) {
+      clearTimeout(timer);
+      const ta = document.getElementById(id);
+      if (ta && ta.classList.contains('md-easy')) {
+        _saveDraft(id, ta.value || '');
+      }
+    }
+    _draftTimers.clear();
+  }
+
+  // Called by each save*() at the end of a successful Store.saveXxx.
+  // Clears dirty flag and wipes drafts for every currently-mounted
+  // editor — once saved, the entity's content matches the draft.
+  function _markClean() {
+    _dirty = false;
+    document.querySelectorAll('textarea.md-easy').forEach(ta => {
+      if (ta.id) _clearDraft(ta.id);
+    });
+  }
+
+  function _showDraftBanner(textarea, draft, mde) {
+    // Place banner directly above the EasyMDE wrapper so it's visually
+    // attached to this specific editor (multi-editor forms possible).
+    const host = textarea.closest('.EasyMDEContainer')?.parentElement || textarea.parentElement;
+    if (!host || host.querySelector(`.md-draft-banner[data-for="${textarea.id}"]`)) return;
+    const when = new Date(draft.savedAt || Date.now()).toLocaleString('cs-CZ', {
+      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+    });
+    const banner = document.createElement('div');
+    banner.className = 'md-draft-banner';
+    banner.setAttribute('data-for', textarea.id);
+    banner.innerHTML = `
+      <span class="md-draft-banner-icon">💾</span>
+      <span class="md-draft-banner-text">Nalezen nedokončený koncept z ${when}. Obnovit?</span>
+      <button type="button" class="md-draft-btn md-draft-btn-restore">Obnovit</button>
+      <button type="button" class="md-draft-btn md-draft-btn-discard">Zahodit</button>
+    `;
+    banner.querySelector('.md-draft-btn-restore').addEventListener('click', () => {
+      if (mde && typeof mde.value === 'function') mde.value(draft.content);
+      else textarea.value = draft.content;
+      _dirty = true;   // restoring a draft counts as unsaved edits
+      banner.remove();
+    });
+    banner.querySelector('.md-draft-btn-discard').addEventListener('click', () => {
+      _clearDraft(textarea.id);
+      banner.remove();
+    });
+    host.insertBefore(banner, host.firstChild);
+  }
+
+  function _wireEasyMDEDraft(mde, textarea) {
+    // Autosave on change, flush on pagehide, offer restore banner when
+    // a stored draft differs from the loaded content.
+    const id = textarea.id;
+    if (!id) return;
+
+    // 1) Restore banner if a draft exists and differs from current value.
+    const draft = _loadDraft(id);
+    if (draft && draft.content !== (textarea.value || '')) {
+      _showDraftBanner(textarea, draft, mde);
+    } else if (draft) {
+      // Draft matches current content — stale, auto-clean.
+      _clearDraft(id);
+    }
+
+    // 2) Autosave on every CodeMirror change.
+    try {
+      mde.codemirror.on('change', () => {
+        _dirty = true;
+        clearTimeout(_draftTimers.get(id));
+        _draftTimers.set(id, setTimeout(() => {
+          const ta = document.getElementById(id);
+          if (ta) _saveDraft(id, ta.value || '');
+        }, DRAFT_DEBOUNCE_MS));
+      });
+    } catch (_) { /* older EasyMDE API */ }
+  }
+
+  // Dirty on any input/change inside an .edit-form (covers non-MD fields).
+  document.addEventListener('input', (e) => {
+    if (e.target.closest && e.target.closest('.edit-form')) _dirty = true;
+  }, true);
+  document.addEventListener('change', (e) => {
+    if (e.target.closest && e.target.closest('.edit-form')) _dirty = true;
+  }, true);
+
+  // Warn if the user tries to close/refresh the tab with unsaved edits.
+  window.addEventListener('beforeunload', (e) => {
+    if (_dirty) { e.preventDefault(); e.returnValue = ''; }
+  });
+
+  // Flush pending autosaves on close. pagehide fires reliably even when
+  // beforeunload is bypassed (mobile back, tab discard).
+  window.addEventListener('pagehide', _flushAllDrafts);
+
+  // Intercept link clicks for in-app navigation (SPA hash routes).
+  // hashchange itself is non-cancelable, so we guard at the click level.
+  document.addEventListener('click', (e) => {
+    if (!_dirty) return;
+    const a = e.target && e.target.closest ? e.target.closest('a[href^="#/"]') : null;
+    if (!a) return;
+    if (!confirm('Máš neuložené změny. Opravdu opustit stránku?')) {
+      e.preventDefault();
+      e.stopPropagation();
+    } else {
+      _dirty = false;
+    }
+  }, true);
+
   // ── Navigate helper (forces re-render even if hash unchanged) ──
   function _navigateOrRefresh(hash) {
     if (window.location.hash === hash) {
@@ -265,6 +422,7 @@ export const EditMode = (() => {
     }
     _runAfterSave('character', newId);
     _toast("✓ Postava uložena");
+    _markClean();
     _navigateOrRefresh(`#/postava/${newId}`);
   }
 
@@ -437,6 +595,7 @@ export const EditMode = (() => {
     });
     _runAfterSave('location', newId);
     _toast("✓ Místo uloženo");
+    _markClean();
     _navigateOrRefresh(`#/misto/${newId}`);
   }
 
@@ -561,6 +720,7 @@ export const EditMode = (() => {
     });
     _runAfterSave('event', newId);
     _toast("✓ Událost uložena");
+    _markClean();
     _navigateOrRefresh(`#/udalost/${newId}`);
   }
 
@@ -614,6 +774,7 @@ export const EditMode = (() => {
       characters:  _checkVals(`mf-chars-${uid}`),
     });
     _toast("✓ Záhada uložena");
+    _markClean();
     _navigateOrRefresh(`#/zahada/${newId}`);
   }
 
@@ -677,6 +838,7 @@ export const EditMode = (() => {
     const existing = originalId ? (Store.getFaction(originalId) || {}) : {};
     Store.saveFaction(newId, { ...existing, name, color, textColor, badge, description: desc, rankChains });
     _toast("✓ Frakce uložena");
+    _markClean();
     _navigateOrRefresh(`#/frakce/${newId}`);
   }
 
@@ -748,6 +910,7 @@ export const EditMode = (() => {
           },
         });
         ta._easymde = mde;
+        _wireEasyMDEDraft(mde, ta);
       } catch (e) {
         console.warn('EasyMDE mount failed', e);
       }
@@ -780,6 +943,7 @@ export const EditMode = (() => {
       description: document.getElementById(`sf-desc-${uid}`)?.value.trim() || '',
     });
     _toast('✓ Druh uložen');
+    _markClean();
     _navigateOrRefresh(`#/druh/${newId}`);
   }
   function deleteSpecies(id) {
@@ -819,6 +983,7 @@ export const EditMode = (() => {
       description: document.getElementById(`gf-desc-${uid}`)?.value.trim()     || '',
     });
     _toast('✓ Božstvo uloženo');
+    _markClean();
     _navigateOrRefresh(`#/buh/${newId}`);
   }
   function deleteBuh(id) {
@@ -858,6 +1023,7 @@ export const EditMode = (() => {
       description:      document.getElementById(`af-desc-${uid}`)?.value.trim()     || '',
     });
     _toast('✓ Artefakt uložen');
+    _markClean();
     _navigateOrRefresh(`#/artefakt/${newId}`);
   }
   function deleteArtifact(id) {
@@ -903,6 +1069,7 @@ export const EditMode = (() => {
       tags,
     });
     _toast('✓ Historická událost uložena');
+    _markClean();
     _navigateOrRefresh(`#/historicka-udalost/${newId}`);
   }
   function deleteHistoricalEvent(id) {

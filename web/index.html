@@ -100,10 +100,10 @@
         <span class="nav-icon">📜</span> Historie</a></li>
     </ul>
 
-    <!-- Edit mode toggle + backup in sidebar footer -->
+    <!-- Edit mode toggle in sidebar footer. Záloha and mapa světa
+         moved to /nastaveni; kept as a single settings entry point. -->
     <div class="sidebar-footer">
-      <a class="sidebar-export-btn edit-only-btn" id="export-btn" href="/api/backup" title="Stáhne zálohu celé datové složky jako ZIP">📥 Záloha</a>
-      <a class="sidebar-export-btn edit-only-btn" href="#/nastaveni" title="Číselníky: vazby, pohlaví, typy míst…">⚙ Nastavení</a>
+      <a class="sidebar-export-btn edit-only-btn" href="#/nastaveni" title="Číselníky, mapa světa, záloha…">⚙ Nastavení</a>
       <button class="edit-mode-toggle" onclick="EditMode.toggle()">✏ Úpravy</button>
     </div>
   </nav>

@@ -242,3 +242,48 @@
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+
+/* ── Special-tab separator in the left nav ──────────────────── */
+.settings-tabs-sep {
+  height: 1px;
+  margin: 0.5rem 0.2rem;
+  background: rgba(212,184,122,0.15);
+}
+
+/* ── Special panels (worldmap, backup) ──────────────────────── */
+.settings-panel {
+  padding: 0.25rem 0;
+}
+.settings-worldmap-preview {
+  margin-top: 0.75rem;
+  border: 1px solid rgba(212,184,122,0.2);
+  border-radius: 6px;
+  background: rgba(0,0,0,0.25);
+  padding: 0.5rem;
+  text-align: center;
+}
+.settings-worldmap-preview img {
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 4px;
+}
+
+.settings-revert-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+  margin: 0.8rem 0 1rem;
+  padding: 0.8rem;
+  background: rgba(200,160,64,0.05);
+  border: 1px solid rgba(200,160,64,0.2);
+  border-radius: 6px;
+}
+
+.settings-snapshots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}

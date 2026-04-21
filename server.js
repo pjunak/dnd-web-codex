@@ -14,12 +14,16 @@ const PORTRAITS_DIR  = path.join(__dirname, 'data', 'portraits');
 const MAPS_DIR       = path.join(__dirname, 'data', 'maps');
 const LOCAL_MAPS_DIR = path.join(MAPS_DIR, 'local');
 const TILES_DIR      = path.join(MAPS_DIR, 'tiles');
+const SWORDCOAST_DIR = path.join(MAPS_DIR, 'swordcoast');
+const SNAPSHOTS_DIR  = path.join(DATA_DIR, 'snapshots');
 const WEB_DIR        = path.join(__dirname, 'web');
 
 fs.mkdirSync(DATA_DIR,       { recursive: true });
 fs.mkdirSync(PORTRAITS_DIR,  { recursive: true });
 fs.mkdirSync(LOCAL_MAPS_DIR, { recursive: true });
 fs.mkdirSync(TILES_DIR,      { recursive: true });
+fs.mkdirSync(SWORDCOAST_DIR, { recursive: true });
+fs.mkdirSync(SNAPSHOTS_DIR,  { recursive: true });
 
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
@@ -87,6 +91,150 @@ function _atomicWrite(filePath, content) {
   const tmp = filePath + '.tmp';
   fs.writeFileSync(tmp, content, 'utf8');
   fs.renameSync(tmp, filePath);
+}
+
+// ── Snapshot system ──────────────────────────────────────────────
+// Every PATCH / POST that writes data creates a point-in-time
+// snapshot of the entire JSON dataset under `data/snapshots/`.
+// One file per snapshot, shape:
+//   { id, createdAt, dataHash, reason, files: { "<name>.json": <parsed> } }
+// Writes coalesce within a 60 s window so burst-edits (e.g.
+// saveLocation's peer cascade) produce one snapshot per logical
+// action. Retention: keep the most recent 50 snapshots, plus one
+// per UTC-day for the last 14 days — whichever is more.
+const SNAPSHOT_COALESCE_MS = 60 * 1000;
+const SNAPSHOT_RECENT_KEEP = 50;
+const SNAPSHOT_DAILY_DAYS  = 14;
+
+function _snapshotFiles() {
+  try {
+    return fs.readdirSync(SNAPSHOTS_DIR)
+      .filter(f => /^snapshot-.*\.json$/.test(f))
+      .sort();
+  } catch { return []; }
+}
+
+function _readSnapshot(id) {
+  const safe = String(id || '').replace(/[^a-zA-Z0-9_\-\.]/g, '');
+  const file = path.join(SNAPSHOTS_DIR, safe);
+  if (!fs.existsSync(file)) return null;
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { return null; }
+}
+
+function _snapshotMeta(filename) {
+  const file = path.join(SNAPSHOTS_DIR, filename);
+  try {
+    const stat = fs.statSync(file);
+    const snap = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return {
+      id:        filename,
+      createdAt: snap.createdAt,
+      dataHash:  snap.dataHash,
+      reason:    snap.reason || 'save',
+      size:      stat.size,
+    };
+  } catch { return null; }
+}
+
+function _lastSnapshotTime() {
+  const files = _snapshotFiles();
+  if (!files.length) return 0;
+  const meta = _snapshotMeta(files[files.length - 1]);
+  return meta && meta.createdAt ? Date.parse(meta.createdAt) : 0;
+}
+
+function _createSnapshot(reason = 'save') {
+  const now       = Date.now();
+  const createdAt = new Date(now).toISOString();
+  const files     = {};
+  try {
+    for (const f of fs.readdirSync(DATA_DIR)) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        files[f] = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf8'));
+      } catch (_) { /* skip corrupt file */ }
+    }
+  } catch (_) { /* data dir missing is OK */ }
+  const snap = {
+    id:        `snapshot-${createdAt.replace(/[:.]/g, '-')}.json`,
+    createdAt,
+    dataHash:  _dataHash(),
+    reason,
+    files,
+  };
+  const target = path.join(SNAPSHOTS_DIR, snap.id);
+  _atomicWrite(target, JSON.stringify(snap));
+  _pruneSnapshots();
+  return snap.id;
+}
+
+// Keep last N plus one per UTC-day for D days. Anything outside
+// both windows is deleted.
+function _pruneSnapshots() {
+  const files = _snapshotFiles();
+  if (files.length <= SNAPSHOT_RECENT_KEEP) return;
+
+  const metas = files.map(_snapshotMeta).filter(Boolean);
+  metas.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+
+  const keep = new Set();
+  // Recent window: last N regardless of date.
+  metas.slice(-SNAPSHOT_RECENT_KEEP).forEach(m => keep.add(m.id));
+
+  // Daily window: one snapshot per UTC-day for the last D days.
+  const byDay = new Map();
+  const oldestDayMs = Date.now() - SNAPSHOT_DAILY_DAYS * 86_400_000;
+  for (const m of metas) {
+    const t = Date.parse(m.createdAt);
+    if (t < oldestDayMs) continue;
+    const day = m.createdAt.slice(0, 10);
+    // Keep the last snapshot of each day (not first, since that
+    // captures the most work done that day).
+    byDay.set(day, m.id);
+  }
+  for (const id of byDay.values()) keep.add(id);
+
+  for (const m of metas) {
+    if (keep.has(m.id)) continue;
+    try { fs.unlinkSync(path.join(SNAPSHOTS_DIR, m.id)); } catch (_) {}
+  }
+}
+
+// Take a snapshot unless the last one is within the coalesce window.
+// Called AFTER a successful write — snapshot N represents the data
+// state after change N, so restoring N puts you back to that moment.
+function _maybeSnapshot(reason = 'save') {
+  const last = _lastSnapshotTime();
+  if (last && Date.now() - last < SNAPSHOT_COALESCE_MS) return null;
+  try { return _createSnapshot(reason); }
+  catch (e) { console.warn('[snapshot] create failed:', e.message); return null; }
+}
+
+// Restore a snapshot: overwrite every JSON file in data/ with the
+// snapshot's contents, and delete any JSON file present today that
+// the snapshot didn't have. Before restoring, take a "pre-restore"
+// snapshot so the operation itself is undoable.
+function _restoreSnapshot(id) {
+  const snap = _readSnapshot(id);
+  if (!snap || !snap.files) return { ok: false, error: 'Snapshot nenalezen' };
+  _createSnapshot('pre-restore');
+  // Write every file in the snapshot.
+  for (const [name, content] of Object.entries(snap.files)) {
+    if (!/^[a-z0-9_]+\.json$/i.test(name)) continue;
+    _atomicWrite(path.join(DATA_DIR, name), JSON.stringify(content, null, 2));
+  }
+  // Remove any JSON file not in the snapshot (e.g. a collection
+  // added after the snapshot that didn't exist then).
+  try {
+    for (const f of fs.readdirSync(DATA_DIR)) {
+      if (!f.endsWith('.json')) continue;
+      if (!Object.prototype.hasOwnProperty.call(snap.files, f)) {
+        try { fs.unlinkSync(path.join(DATA_DIR, f)); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+  return { ok: true };
 }
 
 // ── Data hash ────────────────────────────────────────────────────
@@ -228,6 +376,7 @@ app.post('/api/data', requireAuth, (req, res) => {
     for (const [key, value] of Object.entries(body)) {
       if (typeof value === 'object') _atomicWrite(getFile(key), JSON.stringify(value, null, 2));
     }
+    _maybeSnapshot('save');
     _broadcastDataChanged();
     res.json({ ok: true });
   } catch (e) {
@@ -339,6 +488,7 @@ app.patch('/api/data', requireAuth, (req, res) => {
     }
 
     _atomicWrite(p, JSON.stringify(container, null, 2));
+    _maybeSnapshot('save');
     _broadcastDataChanged();
     res.json({ ok: true });
   } catch (e) {
@@ -431,6 +581,112 @@ app.delete('/api/portrait/:identifier', requireAuth, (req, res) => {
     console.error('DELETE /api/portrait:', e);
     res.status(500).json({ error: 'Delete error' });
   }
+});
+
+// ── Snapshot API ─────────────────────────────────────────────
+// The snapshot system lives in the helpers at the top of this file.
+// Endpoints here expose list / create / restore / delete to the
+// client so the /nastaveni Záloha tab can manage them.
+app.get('/api/snapshots', requireAuth, (_req, res) => {
+  const files = _snapshotFiles();
+  const metas = files.map(_snapshotMeta).filter(Boolean);
+  // Newest first for UI convenience.
+  metas.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  res.json({ snapshots: metas });
+});
+
+app.post('/api/snapshots', requireAuth, (_req, res) => {
+  try {
+    const id = _createSnapshot('manual');
+    res.json({ ok: true, id });
+  } catch (e) {
+    console.error('POST /api/snapshots:', e);
+    res.status(500).json({ error: 'Snapshot failed' });
+  }
+});
+
+app.post('/api/snapshots/:id/restore', requireAuth, (req, res) => {
+  try {
+    const r = _restoreSnapshot(req.params.id);
+    if (!r.ok) return res.status(404).json(r);
+    _broadcastDataChanged();
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /api/snapshots/:id/restore:', e);
+    res.status(500).json({ error: 'Restore failed' });
+  }
+});
+
+// Revert the last N changes by restoring the snapshot N-1 positions
+// back in the newest-first list (so n=1 = second-newest snapshot,
+// which represents state before the most recent change).
+app.post('/api/snapshots/revert-last/:n', requireAuth, (req, res) => {
+  const n = Math.max(1, Math.min(50, Number(req.params.n) || 1));
+  const files = _snapshotFiles();
+  if (files.length <= n) return res.status(400).json({ error: 'Nedostatek bodů zálohy pro zpětný krok' });
+  // files is ascending by timestamp; the last entry is the newest.
+  // To undo the last N changes, restore the snapshot N+1 from the end.
+  const id = files[files.length - 1 - n];
+  try {
+    const r = _restoreSnapshot(id);
+    if (!r.ok) return res.status(404).json(r);
+    _broadcastDataChanged();
+    res.json({ ok: true, id });
+  } catch (e) {
+    console.error('POST /api/snapshots/revert-last:', e);
+    res.status(500).json({ error: 'Revert failed' });
+  }
+});
+
+app.delete('/api/snapshots/:id', requireAuth, (req, res) => {
+  const safe = String(req.params.id || '').replace(/[^a-zA-Z0-9_\-\.]/g, '');
+  const file = path.join(SNAPSHOTS_DIR, safe);
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'Snapshot nenalezen' });
+  try { fs.unlinkSync(file); res.json({ ok: true }); }
+  catch (e) {
+    console.error('DELETE /api/snapshots:', e);
+    res.status(500).json({ error: 'Delete failed' });
+  }
+});
+
+// ── World-map upload ─────────────────────────────────────────
+// Writes the image to `data/maps/swordcoast/sword_coast.<ext>`
+// (the canonical default path the client reads). Removes any
+// existing world-map file with a different extension so the
+// newest upload always wins. Triggers async tile-pyramid build.
+const worldMapStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    fs.mkdirSync(SWORDCOAST_DIR, { recursive: true });
+    cb(null, SWORDCOAST_DIR);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+    cb(null, 'sword_coast' + ext);
+  },
+});
+const uploadWorldMap = multer({
+  storage:    worldMapStorage,
+  limits:     { fileSize: 40 * 1024 * 1024 },
+  fileFilter: _imageFilter,
+});
+
+app.post('/api/worldmap', requireAuth, uploadWorldMap.single('worldmap'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image received' });
+  const newFile = req.file.filename;
+  try {
+    fs.readdirSync(SWORDCOAST_DIR)
+      .filter(f => f !== newFile && /^sword_coast\./i.test(f))
+      .forEach(f => fs.unlinkSync(path.join(SWORDCOAST_DIR, f)));
+  } catch (_) {}
+  const url = `/maps/swordcoast/${newFile}`;
+  // Schedule tile rebuild so the Leaflet path picks up the new image.
+  if (_tiler) {
+    const base = path.basename(newFile, path.extname(newFile));
+    _tiler.buildFor(`swordcoast/${base}`, path.join(SWORDCOAST_DIR, newFile)).catch(e => {
+      console.warn(`[tiles] build failed for swordcoast/${base}:`, e.message);
+    });
+  }
+  res.json({ url });
 });
 
 // ── Full data/ backup as zip ──────────────────────────────────

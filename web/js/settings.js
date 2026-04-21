@@ -31,8 +31,16 @@ export const Settings = (() => {
       fields: ['label', 'bg', 'fg', 'labelColor'] },
   ];
 
-  let _activeCat = CATEGORIES[0].id;
-  let _editingId = null;  // id being edited inline, or '__new__' for add form
+  // Non-enum tabs live alongside the category tabs. They render custom
+  // panels (world-map upload, backup tools) instead of the enum editor.
+  const SPECIAL_TABS = [
+    { id: 'worldmap', label: 'Mapa světa', icon: '🗺' },
+    { id: 'backup',   label: 'Záloha',     icon: '💾' },
+  ];
+
+  let _activeCat   = CATEGORIES[0].id;
+  let _editingId   = null;  // id being edited inline, or '__new__' for add form
+  let _snapshots   = [];    // populated by _loadSnapshots()
 
   // ── Render ───────────────────────────────────────────────────
   function render() {
@@ -44,20 +52,29 @@ export const Settings = (() => {
   }
 
   function _pageHtml() {
+    const enumTabs = CATEGORIES.map(c => `
+      <button type="button" class="settings-tab ${c.id===_activeCat?'is-active':''}"
+        onclick="Settings.selectCategory('${c.id}')">
+        <span class="settings-tab-icon">${c.icon}</span>
+        <span class="settings-tab-label">${esc(c.label)}</span>
+        <span class="settings-tab-count">${Store.getEnum(c.id).length}</span>
+      </button>`).join('');
+    const specialTabs = SPECIAL_TABS.map(t => `
+      <button type="button" class="settings-tab ${t.id===_activeCat?'is-active':''}"
+        onclick="Settings.selectCategory('${t.id}')">
+        <span class="settings-tab-icon">${t.icon}</span>
+        <span class="settings-tab-label">${esc(t.label)}</span>
+      </button>`).join('');
     return `
       <div class="settings-page">
         <div class="page-header"><h1>⚙ Nastavení</h1>
-          <div class="subtitle">Číselníky: vazby, pohlaví, typy míst, stavy…</div>
+          <div class="subtitle">Číselníky, svět, zálohy.</div>
         </div>
         <div class="settings-shell">
           <nav class="settings-tabs">
-            ${CATEGORIES.map(c => `
-              <button type="button" class="settings-tab ${c.id===_activeCat?'is-active':''}"
-                onclick="Settings.selectCategory('${c.id}')">
-                <span class="settings-tab-icon">${c.icon}</span>
-                <span class="settings-tab-label">${esc(c.label)}</span>
-                <span class="settings-tab-count">${Store.getEnum(c.id).length}</span>
-              </button>`).join('')}
+            ${enumTabs}
+            <div class="settings-tabs-sep"></div>
+            ${specialTabs}
           </nav>
           <section class="settings-editor">${_editorHtml()}</section>
         </div>
@@ -65,6 +82,8 @@ export const Settings = (() => {
   }
 
   function _editorHtml() {
+    if (_activeCat === 'worldmap') return _worldmapHtml();
+    if (_activeCat === 'backup')   return _backupHtml();
     const cat = CATEGORIES.find(c => c.id === _activeCat);
     const items = Store.getEnum(_activeCat);
     const rows = items.map(it => _rowHtml(cat, it)).join('');
@@ -189,7 +208,15 @@ export const Settings = (() => {
   function selectCategory(cat) {
     _activeCat = cat;
     _editingId = null;
-    render();
+    if (cat === 'backup') {
+      // Fetch snapshot list before rendering so the table isn't empty
+      // for a frame. Render once on entry (while pending), then again
+      // when the list arrives.
+      render();
+      _loadSnapshots().then(render);
+    } else {
+      render();
+    }
   }
 
   function startNew() {
@@ -252,6 +279,186 @@ export const Settings = (() => {
     Store.resetEnumCategory(_activeCat);
     render();
     _flash('Výchozí položky doplněny');
+  }
+
+  // ── World-map panel ──────────────────────────────────────────
+  function _worldmapHtml() {
+    const current = '/maps/swordcoast/sword_coast.jpg';
+    return `
+      <div class="settings-editor-head">
+        <h2>🗺 Mapa světa</h2>
+      </div>
+      <div class="settings-panel">
+        <p class="settings-hint" style="margin-bottom:1rem">
+          Nahraj nový obrázek hlavní mapy. Uloží se jako
+          <code>${esc(current)}</code> a server automaticky přegeneruje
+          dlaždice (tile pyramid) pro plynulé zoomování.
+        </p>
+        <div class="settings-worldmap-preview">
+          <img src="${esc(current)}?v=${Date.now()}" alt=""
+               onerror="this.style.display='none'">
+        </div>
+        <label class="inline-create-btn" style="cursor:pointer;display:inline-block;margin-top:0.8rem">
+          📂 Vybrat soubor…
+          <input type="file" accept="image/*" style="display:none"
+                 onchange="Settings.uploadWorldMap(this)">
+        </label>
+        <span class="settings-hint" style="margin-left:0.8rem">
+          Max 40 MB. Doporučený formát JPG/PNG/WebP, min. šířka 2000 px.
+        </span>
+      </div>`;
+  }
+
+  function uploadWorldMap(input) {
+    const file = input?.files?.[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('worldmap', file);
+    _flash('Nahrávám…');
+    fetch('/api/worldmap', { method: 'POST', body: fd, credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+      .then(() => {
+        // A legacy localStorage override would still beat the new server
+        // file in WorldMap._getImgUrl, so drop it after a successful
+        // upload — the server copy is now the canonical image.
+        try { localStorage.removeItem('world_map_image_url'); } catch (_) {}
+        _flash('Mapa nahrána — přegenerovávám dlaždice na pozadí…');
+        render();
+      })
+      .catch(e => _flash(e?.error || 'Nahrávání selhalo', false))
+      .finally(() => { if (input) input.value = ''; });
+  }
+
+  // ── Backup / Snapshot panel ──────────────────────────────────
+  function _backupHtml() {
+    const rows = _snapshots.length ? _snapshots.map(_snapshotRow).join('') : `
+      <div class="settings-empty">Zatím žádné body zálohy.</div>`;
+    return `
+      <div class="settings-editor-head">
+        <h2>💾 Záloha</h2>
+        <div class="settings-editor-actions">
+          <a class="inline-create-btn" href="/api/backup"
+             title="Stáhne ZIP celé složky data/">📥 Stáhnout ZIP</a>
+          <button type="button" class="inline-create-btn"
+                  onclick="Settings.createSnapshot()">＋ Vytvořit bod zálohy</button>
+          <button type="button" class="inline-create-btn"
+                  onclick="Settings.refreshSnapshots()">↻ Obnovit</button>
+        </div>
+      </div>
+      <div class="settings-panel">
+        <p class="settings-hint" style="margin-bottom:0.8rem">
+          Server automaticky vytvoří bod zálohy při každé úpravě
+          (sdružuje změny do 60 s). Udržuje posledních 50 bodů plus
+          jeden denní po dobu 14 dnů.
+        </p>
+        <div class="settings-revert-row">
+          <label class="settings-field" style="margin-right:0.6rem">
+            <span class="settings-field-label">Vrátit poslední X úprav</span>
+            <input class="edit-input" type="number" min="1" max="50"
+                   value="1" id="settings-revert-n" style="width:5rem">
+          </label>
+          <button type="button" class="edit-delete-btn"
+                  onclick="Settings.revertLastN()">↶ Vrátit</button>
+        </div>
+        <div class="settings-snapshots">${rows}</div>
+      </div>`;
+  }
+
+  function _snapshotRow(s) {
+    const when = _formatSnapshotDate(s.createdAt);
+    const kb   = Math.max(1, Math.round((s.size || 0) / 1024));
+    const tag  = s.reason === 'manual' ? '✦ ruční' :
+                 s.reason === 'pre-restore' ? '⚠ před obnovou' : '✎ úprava';
+    return `
+      <div class="settings-row">
+        <span class="settings-row-icon">🕒</span>
+        <span class="settings-row-label">${esc(when)}</span>
+        <code class="settings-row-id">${esc(tag)}</code>
+        <span class="settings-row-usage" title="Velikost">${kb} kB</span>
+        <div class="settings-row-actions">
+          <button type="button" class="settings-btn-edit"
+                  title="Obnovit tento stav"
+                  onclick="Settings.restoreSnapshot('${esc(s.id)}')">↶</button>
+          <button type="button" class="settings-btn-del"
+                  title="Smazat bod zálohy"
+                  onclick="Settings.deleteSnapshot('${esc(s.id)}')">🗑</button>
+        </div>
+      </div>`;
+  }
+
+  function _formatSnapshotDate(iso) {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString('cs-CZ', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      });
+    } catch { return String(iso || ''); }
+  }
+
+  function _loadSnapshots() {
+    return fetch('/api/snapshots', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : { snapshots: [] })
+      .then(j => { _snapshots = j.snapshots || []; })
+      .catch(() => { _snapshots = []; });
+  }
+
+  function refreshSnapshots() {
+    _loadSnapshots().then(render);
+  }
+
+  function createSnapshot() {
+    _flash('Vytvářím bod zálohy…');
+    fetch('/api/snapshots', { method: 'POST', credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then(() => _loadSnapshots().then(render).then(() => _flash('Bod zálohy vytvořen ✓')))
+      .catch(() => _flash('Vytvoření bodu zálohy selhalo', false));
+  }
+
+  function restoreSnapshot(id) {
+    const s = _snapshots.find(x => x.id === id);
+    const when = s ? _formatSnapshotDate(s.createdAt) : id;
+    if (!confirm(`Obnovit stav z ${when}? Aktuální data budou přepsána, ale před obnovou se automaticky vytvoří bezpečnostní bod zálohy.`)) return;
+    _flash('Obnovuji…');
+    fetch(`/api/snapshots/${encodeURIComponent(id)}/restore`, {
+      method: 'POST', credentials: 'same-origin',
+    })
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then(() => {
+        _flash('Obnoveno ✓');
+        // Force the client to reload fresh data; SSE should fire too,
+        // but re-fetch to be certain the new state is in the tab.
+        Store.load().then(() => _loadSnapshots().then(render));
+      })
+      .catch(() => _flash('Obnova selhala', false));
+  }
+
+  function deleteSnapshot(id) {
+    const s = _snapshots.find(x => x.id === id);
+    const when = s ? _formatSnapshotDate(s.createdAt) : id;
+    if (!confirm(`Smazat bod zálohy z ${when}?`)) return;
+    fetch(`/api/snapshots/${encodeURIComponent(id)}`, {
+      method: 'DELETE', credentials: 'same-origin',
+    })
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then(() => _loadSnapshots().then(render).then(() => _flash('Smazáno')))
+      .catch(() => _flash('Smazání selhalo', false));
+  }
+
+  function revertLastN() {
+    const input = document.getElementById('settings-revert-n');
+    const n = Math.max(1, Math.min(50, Number(input?.value) || 1));
+    if (!confirm(`Vrátit posledních ${n} úprav? Před obnovou se automaticky vytvoří bezpečnostní bod zálohy.`)) return;
+    _flash(`Vracím posledních ${n} úprav…`);
+    fetch(`/api/snapshots/revert-last/${n}`, {
+      method: 'POST', credentials: 'same-origin',
+    })
+      .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+      .then(() => {
+        _flash('Obnoveno ✓');
+        Store.load().then(() => _loadSnapshots().then(render));
+      })
+      .catch(e => _flash(e?.error || 'Vrácení změn selhalo', false));
   }
 
   // ── Delete-with-usage modal ──────────────────────────────────
@@ -350,5 +557,8 @@ export const Settings = (() => {
     selectCategory, startNew, startEdit, cancelEdit,
     commit, requestDelete, commitDelete, closeModal,
     resetDefaults,
+    uploadWorldMap,
+    refreshSnapshots, createSnapshot, restoreSnapshot,
+    deleteSnapshot, revertLastN,
   };
 })();

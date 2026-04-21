@@ -38,6 +38,11 @@ export const WorldMap = (() => {
   const LS_IMG_KEY  = 'world_map_image_url';
   const DEFAULT_IMG = '/maps/swordcoast/sword_coast.jpg';
 
+  // Server-uploaded world maps live at the canonical DEFAULT_IMG path
+  // (written by POST /api/worldmap in server.js). `localStorage` still
+  // works as a per-browser override for the legacy "upload to the
+  // browser" flow exposed by WorldMap.showSettings, but server uploads
+  // clear that key so the fresh file wins.
   function _getImgUrl() {
     return localStorage.getItem(LS_IMG_KEY) || DEFAULT_IMG;
   }
