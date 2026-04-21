@@ -70,8 +70,6 @@
 
     <div class="sidebar-section sidebar-section-campaign">Kampaň</div>
     <ul class="sidebar-nav">
-      <li><a href="#/parta"       class="nav-link" data-route="/parta">
-        <span class="nav-icon">🛡</span> Parta</a></li>
       <li><a href="#/casova-osa"  class="nav-link" data-route="/casova-osa">
         <span class="nav-icon">⏳</span> Časová Osa</a></li>
       <li><a href="#/zahady"      class="nav-link" data-route="/zahady">
@@ -90,6 +88,19 @@
         <span class="nav-icon">👤</span> Postavy</a></li>
       <li><a href="#/frakce"      class="nav-link" data-route="/frakce">
         <span class="nav-icon">⬡</span> Frakce</a></li>
+    </ul>
+
+    <button class="sidebar-subsection" id="sidebar-kompendium-toggle"
+            type="button"
+            aria-expanded="false"
+            onclick="this.classList.toggle('is-open');
+                     document.getElementById('sidebar-kompendium').classList.toggle('is-open');
+                     this.setAttribute('aria-expanded', this.classList.contains('is-open'));
+                     try { localStorage.setItem('sidebar_kompendium_open', this.classList.contains('is-open') ? '1' : '0'); } catch(e){}">
+      <span class="sidebar-subsection-chevron">▸</span>
+      <span class="sidebar-subsection-label">Kompendium</span>
+    </button>
+    <ul class="sidebar-nav sidebar-subsection-list" id="sidebar-kompendium">
       <li><a href="#/druhy"       class="nav-link" data-route="/druhy">
         <span class="nav-icon">🧬</span> Druhy</a></li>
       <li><a href="#/panteon"     class="nav-link" data-route="/panteon">
@@ -99,6 +110,19 @@
       <li><a href="#/historie"    class="nav-link" data-route="/historie">
         <span class="nav-icon">📜</span> Historie</a></li>
     </ul>
+    <script>
+      // Restore Kompendium open state on page load (before app.js boots,
+      // so the first render paints the correct state without flicker).
+      (function() {
+        try {
+          if (localStorage.getItem('sidebar_kompendium_open') === '1') {
+            document.getElementById('sidebar-kompendium-toggle')?.classList.add('is-open');
+            document.getElementById('sidebar-kompendium')?.classList.add('is-open');
+            document.getElementById('sidebar-kompendium-toggle')?.setAttribute('aria-expanded', 'true');
+          }
+        } catch (e) {}
+      })();
+    </script>
 
     <!-- Edit mode toggle in sidebar footer. Záloha and mapa světa
          moved to /nastaveni; kept as a single settings entry point. -->

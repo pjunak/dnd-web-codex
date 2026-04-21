@@ -172,6 +172,48 @@ p  { color: var(--text-parchment); margin-bottom: 0.75em; }
 .nav-link.active { background: rgba(200,160,64,0.12); color: var(--accent-gold); }
 .nav-icon { font-size: 0.75rem; opacity: 0.7; }
 
+/* ── Collapsible sub-section (Kompendium, under Svět) ────────
+   Clickable header that toggles a child <ul>. Default closed so
+   lore pages stay out of the way during play; open state is
+   persisted in localStorage. */
+.sidebar-subsection {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: calc(100% - 1rem);
+  margin: 0.15rem 0.5rem 0;
+  padding: 0.45rem 0.75rem;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+.sidebar-subsection:hover { background: rgba(200,160,64,0.06); color: var(--accent-gold); }
+.sidebar-subsection-chevron {
+  display: inline-block;
+  font-size: 0.65rem;
+  width: 0.8em;
+  transition: transform 0.15s;
+}
+.sidebar-subsection.is-open .sidebar-subsection-chevron { transform: rotate(90deg); }
+.sidebar-subsection-list {
+  max-height: 0;
+  overflow: hidden;
+  padding: 0 0.5rem;
+  transition: max-height 0.2s ease, padding-top 0.2s ease;
+}
+.sidebar-subsection-list.is-open {
+  max-height: 400px;
+  padding-top: 0.1rem;
+}
+
 /* ── Loading Screen ─────────────────────────────────────────── */
 .loading-screen {
   display: flex;

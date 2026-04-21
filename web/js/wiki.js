@@ -21,8 +21,8 @@ export const Wiki = (() => {
   // a per-entity text blob (name + tags + type + description + …).
   const LS_LIST_KEY = 'wiki_list_state_v1';
   const _defaultListState = {
-    postavy: { values: [], sort: 'faction' },
-    mista:   { values: [], sort: 'name' },
+    postavy: { values: [], sort: 'faction', faction: null, attitude: null },
+    mista:   { values: [], sort: 'type',    attitude: null },
     frakce:  { values: [], sort: 'default' },
   };
   function _migrateSlot(def, raw) {
@@ -57,6 +57,33 @@ export const Wiki = (() => {
       const n = norm(v);
       return n ? b.includes(n) : true;
     });
+  }
+
+  // ── Attitude ring helpers ──────────────────────────────────────
+  // Cards that represent an entity with an attitude toward the party
+  // get a thin colored ring around them. Single attitude = solid; multi
+  // attitudes (locations) = conic-gradient split evenly. Party members
+  // always get the party color regardless of their own attitude field.
+  // Returns a CSS value (color or gradient), or '' to skip the ring.
+  function _attitudeColorMap() {
+    const map = {};
+    for (const a of Store.getEnum('attitudes') || []) {
+      map[a.id] = a.labelColor || a.bg || '#888';
+    }
+    return map;
+  }
+  function _characterRing(c, colors) {
+    if (c.faction === PARTY_FACTION_ID) return colors.party || '#F0E6C8';
+    if (c.attitude && colors[c.attitude]) return colors[c.attitude];
+    return '';
+  }
+  function _locationRing(l, colors) {
+    const ids = Array.isArray(l.attitudes) ? l.attitudes.filter(x => colors[x]) : [];
+    if (ids.length === 0) return '';
+    if (ids.length === 1) return colors[ids[0]];
+    const step = 100 / ids.length;
+    const segs = ids.map((id, i) => `${colors[id]} ${i*step}% ${(i+1)*step}%`).join(', ');
+    return `conic-gradient(${segs})`;
   }
 
   // Shared toolbar: TagFilter (name + tags, unified) + sort <select>.
@@ -238,92 +265,176 @@ export const Wiki = (() => {
 
   // ══════════════════════════════════════════════════════════════
   //  DASHBOARD
+  //  Layout: Hero (editable campaign name + tagline) → Naše parta
+  //  (responsive portrait grid) → Poslední sezení (events from the
+  //  latest sitting) → Otevřené záhady (top 3 unsolved by priority).
   // ══════════════════════════════════════════════════════════════
+  const PRIORITY_ORDER = { 'kritická': 0, 'vysoká': 1, 'střední': 2, 'nízká': 3 };
+
   function renderDashboard() {
-    const allChars  = Store.getCharacters();
-    const party     = allChars.filter(c => c.faction === PARTY_FACTION_ID);
-    const chars     = allChars.filter(c => c.faction !== PARTY_FACTION_ID);   // NPCs
-    const mysteries = Store.getMysteries();
-    const totalChars    = chars.length;
-    const knownChars    = chars.filter(c => c.knowledge >= 3).length;
-    const openMysteries = mysteries.length;
-    // "Circumstances" replaces the old captured status; keep a count of
-    // any NPC with a non-empty circumstances note (e.g. "Zajat/a").
-    const capturedCount = chars.filter(c => c.circumstances && c.circumstances.trim()).length;
-    const partyCount    = party.length;
+    const editing  = EditMode.isActive();
+    const campaign = Store.getCampaign();
+    const party    = Store.getCharacters().filter(c => c.faction === PARTY_FACTION_ID);
 
     return `
-      <div class="text-center" style="padding-top:1rem">
-        <div class="dashboard-title">O Barvách Draků</div>
-        <div class="dashboard-subtitle">Kodex Kampaně</div>
-        <div class="dashboard-divider"></div>
-      </div>
-
-      <div class="dash-section-title">Mind Mapy</div>
-      <div class="dashboard-grid">
-        <a href="#/mapa/frakce"     class="dash-card" style="text-decoration:none">
-          <div class="dash-card-icon">⬡</div>
-          <div class="dash-card-title">Frakce &amp; Hierarchie</div>
-          <div class="dash-card-desc">Kdo patří kam. Hierarchie Dračího Kultu, naše parta, greenestské postavy a draci.</div>
-        </a>
-        <a href="#/mapa/vztahy"    class="dash-card" style="text-decoration:none">
-          <div class="dash-card-icon">🕸</div>
-          <div class="dash-card-title">Vztahová Síť</div>
-          <div class="dash-card-desc">Osobní vazby mezi postavami — spojenectví, nepřátelství, záhady.</div>
-        </a>
-        <a href="#/mapa/tajemstvi" class="dash-card" style="text-decoration:none">
-          <div class="dash-card-icon">❓</div>
-          <div class="dash-card-title">Záhady &amp; Stopy</div>
-          <div class="dash-card-desc">Otevřené otázky a co k nim víme. ${openMysteries} aktivních záhad.</div>
-        </a>
-        <a href="#/casova-osa" class="dash-card" style="text-decoration:none">
-          <div class="dash-card-icon">📜</div>
-          <div class="dash-card-title">Časová Osa</div>
-          <div class="dash-card-desc">Události kampaně v chronologickém pořadí s propojením na postavy.</div>
-        </a>
-      </div>
-
-      <div class="dash-section-title" style="margin-top:2rem">Rychlý Přehled</div>
-      <div class="dashboard-grid" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:0.75rem">
-        <a href="#/parta" class="dash-card" style="text-decoration:none;text-align:center;border-color:rgba(200,160,64,0.4)">
-          <div style="font-size:2rem;margin-bottom:0.35rem">🛡</div>
-          <div class="dash-card-title" style="font-size:1.6rem;margin-bottom:0;color:var(--accent-gold)">${partyCount}</div>
-          <div class="dash-card-desc">Parta</div>
-        </a>
-        <a href="#/postavy" class="dash-card" style="text-decoration:none;text-align:center">
-          <div style="font-size:2rem;margin-bottom:0.35rem">👤</div>
-          <div class="dash-card-title" style="font-size:1.6rem;margin-bottom:0">${totalChars}</div>
-          <div class="dash-card-desc">Postav</div>
-        </a>
-        <div class="dash-card" style="text-align:center">
-          <div style="font-size:2rem;margin-bottom:0.35rem">👁</div>
-          <div class="dash-card-title" style="font-size:1.6rem;margin-bottom:0">${knownChars}</div>
-          <div class="dash-card-desc">Dobře zmapovaných</div>
-        </div>
-        <div class="dash-card" style="text-align:center;border-color:rgba(106,27,154,0.3)">
-          <div style="font-size:2rem;margin-bottom:0.35rem">❓</div>
-          <div class="dash-card-title" style="font-size:1.6rem;margin-bottom:0;color:#ce93d8">${openMysteries}</div>
-          <div class="dash-card-desc">Záhad</div>
-        </div>
-        <div class="dash-card" style="text-align:center;border-color:rgba(21,101,192,0.3)">
-          <div style="font-size:2rem;margin-bottom:0.35rem">⛓</div>
-          <div class="dash-card-title" style="font-size:1.6rem;margin-bottom:0;color:#90caf9">${capturedCount}</div>
-          <div class="dash-card-desc">S okolnostmi</div>
-        </div>
-      </div>
-
-      ${_recentActivityBlock()}
-
-      <div class="dash-section-title" style="margin-top:2rem">Kritické Záhady</div>
-      <div class="mystery-list">
-        ${mysteries.filter(m => m.priority === "kritická" || m.priority === "vysoká").map(m => `
-          <div class="mystery-card">
-            <div class="mystery-name">❓ ${esc(m.name)}</div>
-            <div class="mystery-priority priority-${m.priority}">${m.priority.toUpperCase()}</div>
-            <div class="mystery-desc md-view">${renderMarkdown(m.description)}</div>
-          </div>`).join("")}
-      </div>
+      ${_dashHeroHtml(campaign, editing)}
+      ${_dashPartyHtml(party, editing)}
+      ${_dashLastSessionHtml(editing)}
+      ${_dashMysteriesHtml()}
     `;
+  }
+
+  function _dashHeroHtml(campaign, editing) {
+    // In edit mode the name + tagline become plaintext-only
+    // contenteditable regions that commit on blur. Enter blurs (so the
+    // user can't accidentally insert a newline in the title).
+    const nameAttrs = editing
+      ? `contenteditable="plaintext-only"
+         onblur="Wiki.saveCampaignField('name', this.textContent.trim())"
+         onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+         title="Klikni pro úpravu"`
+      : '';
+    const taglineAttrs = editing
+      ? `contenteditable="plaintext-only"
+         onblur="Wiki.saveCampaignField('tagline', this.textContent.trim())"
+         onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+         title="Klikni pro úpravu"
+         data-placeholder="Podtitul kampaně — klikni pro úpravu"`
+      : '';
+    return `
+      <div class="dash-hero ${editing ? 'is-editing' : ''}">
+        <h1 class="dash-hero-name" ${nameAttrs}>${esc(campaign.name)}</h1>
+        <div class="dash-hero-tagline" ${taglineAttrs}>${esc(campaign.tagline || '')}</div>
+      </div>`;
+  }
+
+  function _dashPartyHtml(party, editing) {
+    const addCard = editing ? `
+      <a class="dash-party-card dash-party-card-new" href="#/postava/new"
+         title="Přidat novou postavu">
+        <div class="dash-party-add">＋</div>
+        <div class="dash-party-name">Nová postava</div>
+      </a>` : '';
+    if (!party.length) {
+      return `
+        <div class="dash-section">
+          <div class="dash-section-head"><h2>🛡 Naše parta</h2></div>
+          <div class="dash-empty">
+            Zatím tu není žádný PC. V režimu úprav přidej postavu a přiřaď jí frakci <em>Parta</em>.
+          </div>
+          ${editing ? `<div class="dash-party-grid">${addCard}</div>` : ''}
+        </div>`;
+    }
+    const locNameOf = (id) => {
+      if (!id) return '';
+      const l = Store.getLocation(id);
+      return l ? l.name : '';
+    };
+    const cards = party.map(c => {
+      const locName = locNameOf(c.location);
+      const locChip = locName
+        ? `<div class="dash-party-loc" title="Aktuální pozice">📍 ${esc(locName)}</div>`
+        : '';
+      const titleLine = c.title ? `<div class="dash-party-title">${esc(c.title)}</div>` : '';
+      const statusDot = `<span class="dash-party-status" data-status="${esc(c.status||'alive')}"></span>`;
+      return `
+        <a class="dash-party-card" href="#/postava/${c.id}">
+          <div class="dash-party-portrait">${portraitWrap(c)}</div>
+          <div class="dash-party-body">
+            <div class="dash-party-name">${statusDot}${esc(c.name)}</div>
+            ${titleLine}
+            ${locChip}
+          </div>
+        </a>`;
+    }).join('');
+    return `
+      <div class="dash-section">
+        <div class="dash-section-head">
+          <h2>🛡 Naše parta</h2>
+          <a class="dash-section-action" href="#/parta">Celá parta →</a>
+        </div>
+        <div class="dash-party-grid">${cards}${addCard}</div>
+      </div>`;
+  }
+
+  function _dashLastSessionHtml(editing) {
+    const events = Store.getEvents();
+    const maxSitting = events.reduce((m, e) => Math.max(m, Number(e.sitting) || 0), 0);
+    if (maxSitting === 0) {
+      if (editing) return `
+        <div class="dash-section">
+          <div class="dash-section-head"><h2>🕯 Poslední sezení</h2></div>
+          <div class="dash-empty">Zatím nejsou žádné události s přiřazeným sezením. Přidej událost v <a href="#/casova-osa">Časové ose</a>.</div>
+        </div>`;
+      return '';
+    }
+    const sessionEvents = events
+      .filter(e => Number(e.sitting) === maxSitting)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    if (!sessionEvents.length) return '';
+    const items = sessionEvents.map(e => {
+      const charCount = (e.characters || []).length;
+      const locCount  = (e.locations  || []).length;
+      const meta = [
+        charCount ? `👤 ${charCount}` : '',
+        locCount  ? `📍 ${locCount}`  : '',
+      ].filter(Boolean).join(' · ');
+      return `
+        <a class="dash-event-row" href="#/udalost/${e.id}">
+          <div class="dash-event-name">${esc(e.name)}</div>
+          ${e.short ? `<div class="dash-event-short">${esc(e.short)}</div>` : ''}
+          ${meta ? `<div class="dash-event-meta">${meta}</div>` : ''}
+        </a>`;
+    }).join('');
+    return `
+      <div class="dash-section">
+        <div class="dash-section-head">
+          <h2>🕯 Poslední sezení <span class="dash-session-badge">Sezení ${maxSitting}</span></h2>
+          <a class="dash-section-action" href="#/casova-osa">Celá časová osa →</a>
+        </div>
+        <div class="dash-event-list">${items}</div>
+      </div>`;
+  }
+
+  function _dashMysteriesHtml() {
+    const unsolved = Store.getMysteries()
+      .filter(m => !m.solved)
+      .sort((a, b) =>
+        (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9)
+        || _czCompare(a.name, b.name));
+    if (!unsolved.length) return '';
+    const top = unsolved.slice(0, 3);
+    const items = top.map(m => {
+      const prio = m.priority
+        ? `<span class="mystery-priority priority-${esc(m.priority)}">${esc(m.priority.toUpperCase())}</span>`
+        : '';
+      const questions = Array.isArray(m.questions) && m.questions.length
+        ? `<div class="dash-mystery-q">${esc(m.questions[0])}</div>` : '';
+      return `
+        <a class="dash-mystery-row" href="#/zahada/${m.id}">
+          <div class="dash-mystery-name">❓ ${esc(m.name)}</div>
+          ${prio}
+          ${questions}
+        </a>`;
+    }).join('');
+    return `
+      <div class="dash-section">
+        <div class="dash-section-head">
+          <h2>🗝 Otevřené záhady</h2>
+          <a class="dash-section-action" href="#/zahady">Všechny záhady →</a>
+        </div>
+        <div class="dash-mystery-list">${items}</div>
+      </div>`;
+  }
+
+  // Persist a single campaign field when the user blurs an editable
+  // hero region. No-op if the user didn't change anything (Store will
+  // still fire a sync, but the server is idempotent).
+  function saveCampaignField(field, value) {
+    if (typeof field !== 'string' || !field) return;
+    const patch = {};
+    patch[field] = typeof value === 'string' ? value : '';
+    Store.setCampaign(patch);
   }
 
   // Dashboard "Poslední úpravy" — top 5 most-recently edited entities
@@ -351,23 +462,34 @@ export const Wiki = (() => {
   // ══════════════════════════════════════════════════════════════
   //  CHARACTER LIST
   // ══════════════════════════════════════════════════════════════
-  // Party lives on /parta and is filtered out of /postavy, so it's
-  // intentionally absent from the faction-sort order.
-  const FACTION_ORDER = ["cult_high","cult_red","dragon","greenest","neutral","mystery"];
+  // Party sits first in the faction-sort order so PCs show up at the
+  // top of the default grouped view. Subsequent ids mirror the rough
+  // narrative arc of the current campaign.
+  const FACTION_ORDER = [PARTY_FACTION_ID, "cult_high","cult_red","dragon","greenest","neutral","mystery"];
   const STATUS_ORDER  = { alive: 0, unknown: 1, dead: 2 };
 
   // Apply current search + sort to the character list. `filterFaction` is
   // the faction filter-bar selection (orthogonal to text search).
   function _postavyApply(filterFaction) {
     const s = _listState.postavy;
-    // Party PCs live on their own page (#/parta) and are omitted from the
-    // NPC roster unconditionally. Combobox sources are untouched.
-    let chars = Store.getCharacters().filter(c => c.faction !== PARTY_FACTION_ID);
+    // Party is included now — PCs share the Postavy list with NPCs.
+    // The dashboard's party strip is the at-a-glance view; this list is
+    // the full roster with filtering and grouping.
+    let chars = Store.getCharacters().slice();
     if (s.values && s.values.length) {
       chars = chars.filter(c => _matchAll(s.values,
         `${c.name||''} ${c.title||''} ${(c.tags||[]).join(' ')} ${c.description||''} ${c.species||''} ${c.gender||''}`));
     }
     if (filterFaction) chars = chars.filter(c => c.faction === filterFaction);
+    if (s.attitude) {
+      const a = s.attitude;
+      chars = chars.filter(c => {
+        // Party members match the 'party' filter via their faction;
+        // otherwise compare against the character's own attitude field.
+        if (a === 'party') return c.faction === PARTY_FACTION_ID;
+        return c.attitude === a;
+      });
+    }
     chars = [...chars];
     switch (s.sort) {
       case 'name':
@@ -396,6 +518,7 @@ export const Wiki = (() => {
 
   function _postavyGridHtml(filterFaction) {
     const chars = _postavyApply(filterFaction);
+    const s = _listState.postavy;
     const newCard = EditMode.isActive() ? `
       <a class="char-card char-card-new" href="#/postava/new" style="text-decoration:none">
         <div class="char-card-new-icon">＋</div>
@@ -403,17 +526,50 @@ export const Wiki = (() => {
       </a>` : "";
     const emptyMsg = chars.length === 0
       ? `<div class="list-empty">Žádná postava neodpovídá hledání.</div>` : "";
-    return `${chars.map(renderCharacterCard).join("")}${emptyMsg}${newCard}`;
+
+    // Group by faction when the default grouped-sort is active and no
+    // single-faction filter is pinned. All other sorts render a flat
+    // grid (grouping would fight the intent of those sort orders).
+    const grouped = (s.sort === 'faction') && !filterFaction && chars.length > 0;
+    if (grouped) {
+      const factions = Store.getFactions();
+      const byFac = new Map();
+      for (const c of chars) {
+        const k = c.faction || '__nofac__';
+        if (!byFac.has(k)) byFac.set(k, []);
+        byFac.get(k).push(c);
+      }
+      const orderedKeys = [
+        ...FACTION_ORDER.filter(id => byFac.has(id)),
+        ...[...byFac.keys()].filter(k => !FACTION_ORDER.includes(k)),
+      ];
+      const sections = orderedKeys.map(fid => {
+        const list = byFac.get(fid) || [];
+        const f = factions[fid];
+        const label = f ? `${f.badge || '⬡'} ${f.name}` : (fid === '__nofac__' ? 'Bez frakce' : fid);
+        return `
+          <div class="list-group">
+            <div class="list-group-title">${esc(label)} <span class="list-group-count">${list.length}</span></div>
+            <div class="char-grid">${list.map(renderCharacterCard).join('')}</div>
+          </div>`;
+      }).join('');
+      return `${sections}${newCard ? `<div class="char-grid">${newCard}</div>` : ''}${emptyMsg}`;
+    }
+
+    return `<div class="char-grid">${chars.map(renderCharacterCard).join("")}${newCard}${emptyMsg}</div>`;
   }
 
   function renderCharacterList(filterFaction) {
-    if (filterFaction === PARTY_FACTION_ID) filterFaction = null;
+    // Preserve the previously-active faction filter when the caller
+    // omits one (avoids tab-reset on sort change). Passing 'all' explicitly
+    // clears it.
+    if (filterFaction === 'all') filterFaction = null;
+    if (filterFaction === undefined) filterFaction = _listState.postavy.faction || null;
     _listState.postavy.faction = filterFaction || null;
     _persistListState();
 
     const factions = Store.getFactions();
-    // Postavy = NPCs only. Party PCs live at /parta.
-    const allChars = Store.getCharacters().filter(c => c.faction !== PARTY_FACTION_ID);
+    const allChars = Store.getCharacters();
 
     // Truly-empty collection (not just filtered) → onboarding card.
     if (allChars.length === 0) {
@@ -422,37 +578,59 @@ export const Wiki = (() => {
         ${_renderEmptyState({
           icon: '👤',
           title: 'Zatím žádné postavy',
-          description: 'NPCs, spojenci a nepřátelé, které parta potkává. Přidej první postavu a začni budovat svět.',
+          description: 'PCs, spojenci a nepřátelé, které parta potkává. Přidej první postavu a začni budovat svět.',
           ctaLabel: 'Nová postava', ctaHref: '#/postava/new',
         })}`;
     }
 
-    const filters = Object.entries(factions).map(([id, f]) => {
-      if (id === PARTY_FACTION_ID) return "";
+    // Faction filter chips — party is now part of the list, so its
+    // chip appears here too when any PCs exist.
+    const factionFilters = Object.entries(factions).map(([id, f]) => {
       const count = allChars.filter(c => c.faction === id).length;
       if (count === 0) return "";
       return `<button class="filter-btn ${filterFaction === id ? "active" : ""}"
         onclick="Wiki.renderPage('postavy','${id}')">${f.badge} ${esc(f.name)} (${count})</button>`;
     }).join("");
 
+    // Attitude filter chips — quick slice by stance toward the party.
+    // Includes the `party` pseudo-attitude (derived from faction).
+    const attEnum = Store.getEnum('attitudes') || [];
+    const activeAtt = _listState.postavy.attitude || null;
+    const attFilters = attEnum.map(a => {
+      const count = a.id === PARTY_FACTION_ID
+        ? 0 // party handled via the party chip above (legacy id collision)
+        : allChars.filter(c => c.attitude === a.id).length;
+      const partyCount = allChars.filter(c => c.faction === PARTY_FACTION_ID).length;
+      const n = a.id === 'party' ? partyCount : count;
+      if (n === 0) return "";
+      const color = a.labelColor || a.bg || '#888';
+      return `<button class="filter-btn filter-btn-attitude ${activeAtt === a.id ? 'active' : ''}"
+        style="--attitude-color: ${esc(color)}"
+        onclick="Wiki.setPostavyAttitude('${esc(a.id)}')">●&nbsp;${esc(a.label)} (${n})</button>`;
+    }).filter(Boolean).join('');
+
     const shown = _postavyApply(filterFaction);
 
     return `
       <div class="page-header">
         <h1>Postavy</h1>
-        <div class="subtitle">${shown.length} / ${allChars.length} záznamů${filterFaction ? " · " + factions[filterFaction]?.name : ""}</div>
+        <div class="subtitle">${shown.length} / ${allChars.length} záznamů${filterFaction ? " · " + factions[filterFaction]?.name : ""}${activeAtt ? " · " + esc(attEnum.find(a=>a.id===activeAtt)?.label || activeAtt) : ""}</div>
       </div>
       <div class="filter-bar">
-        <button class="filter-btn ${!filterFaction ? "active" : ""}" onclick="Wiki.renderPage('postavy')">Všechny</button>
-        ${filters}
+        <button class="filter-btn ${!filterFaction ? "active" : ""}" onclick="Wiki.renderPage('postavy','all')">Všechny</button>
+        ${factionFilters}
       </div>
+      ${attFilters ? `<div class="filter-bar filter-bar-attitudes">
+        <button class="filter-btn ${!activeAtt ? 'active' : ''}" onclick="Wiki.setPostavyAttitude('')">Libovolný postoj</button>
+        ${attFilters}
+      </div>` : ''}
       ${_listToolbar('postavy', [
-        ['faction',   'Frakce'],
+        ['faction',   'Frakce (seskupeno)'],
         ['name',      'Jméno (A→Z)'],
         ['status',    'Status'],
         ['knowledge', 'Znalost (nejvíc)'],
       ])}
-      <div class="char-grid" id="wl-postavy-grid">${_postavyGridHtml(filterFaction)}</div>
+      <div id="wl-postavy-grid">${_postavyGridHtml(filterFaction)}</div>
     `;
   }
 
@@ -470,12 +648,18 @@ export const Wiki = (() => {
     _persistListState();
     _refreshPostavyGrid();
   }
+  function setPostavyAttitude(v) {
+    _listState.postavy.attitude = v || null;
+    _persistListState();
+    // Re-render the whole page so attitude chip highlights + subtitle update.
+    Wiki.renderPage('postavy', _listState.postavy.faction || 'all');
+  }
   function _refreshPostavyGrid() {
     const host = document.getElementById('wl-postavy-grid');
     if (host) host.innerHTML = _postavyGridHtml(_listState.postavy.faction);
   }
   function _refreshPostavyCount() {
-    const total = Store.getCharacters().filter(c => c.faction !== PARTY_FACTION_ID).length;
+    const total = Store.getCharacters().length;
     const shown = _postavyApply(_listState.postavy.faction).length;
     const sub = document.querySelector('.page-header .subtitle');
     if (!sub) return;
@@ -486,8 +670,11 @@ export const Wiki = (() => {
 
   function renderCharacterCard(c) {
     const overlay = EditMode.isActive() ? editOverlay(`#/postava/${c.id}`) : "";
+    const ring    = _characterRing(c, _attitudeColorMap());
+    const ringStyle = ring ? ` style="--attitude-ring: ${ring}"` : '';
+    const ringClass = ring ? ' has-attitude-ring' : '';
     return `
-      <a class="char-card" href="#/postava/${c.id}" style="text-decoration:none;position:relative">
+      <a class="char-card${ringClass}" href="#/postava/${c.id}"${ringStyle}>
         ${portraitWrap(c)}
         ${overlay}
         <div class="char-card-info">
@@ -550,16 +737,32 @@ export const Wiki = (() => {
       ? `<div class="md-view">${renderMarkdown(c.description)}</div>`
       : `<em>O této postavě toho víme jen velmi málo.</em>`;
 
+    // Attitude chip next to faction + status. Uses the same color as
+    // the ring on the list card. Party PCs implicitly show "Parta".
+    let attitudeChip = '';
+    if (c.knowledge >= 2) {
+      const attEnum = Store.getEnum('attitudes') || [];
+      const isParty = c.faction === PARTY_FACTION_ID;
+      const attId   = isParty ? 'party' : c.attitude;
+      const def     = attEnum.find(a => a.id === attId);
+      if (def) {
+        const color = def.labelColor || def.bg || '#888';
+        attitudeChip = `<span class="badge badge-attitude"
+          style="background:${esc(color)}22;color:${esc(color)};border:1px solid ${esc(color)}66">●&nbsp;${esc(def.label)}</span>`;
+      }
+    }
+
     return _articleShell({
       visual:   portraitWrap(c),
       title:    c.knowledge >= 1 ? esc(c.name) : 'Neznámá Postava',
       subtitle: c.knowledge >= 2 && c.title ? esc(c.title) : '',
       chips:    [
         factionBadge(c.faction),
+        attitudeChip,
         statusBadge(c.status),
         knowledgeBadge(c.knowledge),
         ...profileBits,
-      ],
+      ].filter(Boolean),
       facts,
       sections: [
         { title: 'Vazby',               html: rels.length          ? _relChipsHtml(rels, id, chars) : '' },
@@ -608,6 +811,9 @@ export const Wiki = (() => {
       locs = locs.filter(l => _matchAll(s.values,
         `${l.name||''} ${l.type||''} ${l.region||''} ${(l.tags||[]).join(' ')} ${l.description||''} ${l.status||''}`));
     }
+    if (s.attitude) {
+      locs = locs.filter(l => Array.isArray(l.attitudes) && l.attitudes.includes(s.attitude));
+    }
     locs = [...locs];
     switch (s.sort) {
       case 'type':
@@ -627,32 +833,78 @@ export const Wiki = (() => {
     return locs;
   }
 
+  function _renderLocCard(l, colors) {
+    const pt = PIN_TYPES[l.pinType] || PIN_TYPES.custom || { icon: '📍', color: '#888' };
+    const typeLabel = pt.label || l.type || '';
+    const region = l.region ? `<div class="loc-card-sub">${esc(l.region)}</div>` : '';
+    const editBtn = EditMode.isActive()
+      ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
+    const ring = _locationRing(l, colors);
+    const ringStyle = ring ? ` --attitude-ring: ${ring};` : '';
+    const ringClass = ring ? ' has-attitude-ring' : '';
+    return `<a class="loc-card${ringClass}" href="#/misto/${l.id}" style="text-decoration:none;position:relative;${ringStyle}">
+      ${editBtn}
+      <div class="loc-card-icon" style="color:${pt.color}">${pt.icon}</div>
+      <div class="loc-card-body">
+        <div class="loc-card-name">${esc(l.name)}</div>
+        <div class="loc-card-type">${esc(typeLabel)}</div>
+        ${region}
+      </div>
+    </a>`;
+  }
+
   function _mistaGridHtml() {
     const locs = _mistaApply();
+    const s = _listState.mista;
+    const colors = _attitudeColorMap();
     const newCard = EditMode.isActive() ? `
       <a class="loc-card loc-card-new" href="#/misto/new" style="text-decoration:none">
         <div class="loc-card-new-icon">＋</div>
         <div class="loc-card-new-label">Nové místo</div>
       </a>` : "";
+
     if (locs.length === 0) {
-      return `<div class="list-empty">Žádné místo neodpovídá hledání.</div>${newCard}`;
+      return `<div class="loc-grid"><div class="list-empty">Žádné místo neodpovídá hledání.</div>${newCard}</div>`;
     }
-    return locs.map(l => {
-      const pt = PIN_TYPES[l.pinType] || PIN_TYPES.custom || { icon: '📍', color: '#888' };
-      const typeLabel = pt.label || l.type || '';
-      const region = l.region ? `<div class="loc-card-sub">${esc(l.region)}</div>` : '';
-      const editBtn = EditMode.isActive()
-        ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
-      return `<a class="loc-card" href="#/misto/${l.id}" style="text-decoration:none;position:relative">
-        ${editBtn}
-        <div class="loc-card-icon" style="color:${pt.color}">${pt.icon}</div>
-        <div class="loc-card-body">
-          <div class="loc-card-name">${esc(l.name)}</div>
-          <div class="loc-card-type">${esc(typeLabel)}</div>
-          ${region}
-        </div>
-      </a>`;
-    }).join("") + newCard;
+
+    // Group by pinType when the default grouped-sort is active. pinTypes
+    // settings carry a `priority` (1-3) so major cities head the page,
+    // smaller settlements/wild places follow, then an "Ostatní" bucket.
+    if (s.sort === 'type') {
+      const pinEnum = Store.getEnum('pinTypes') || [];
+      const prioMap = new Map(pinEnum.map(p => [p.id, Number(p.priority) || 3]));
+      const byType = new Map();
+      for (const l of locs) {
+        const k = l.pinType || '__other__';
+        if (!byType.has(k)) byType.set(k, []);
+        byType.get(k).push(l);
+      }
+      const keys = [...byType.keys()];
+      keys.sort((a, b) => {
+        if (a === '__other__') return 1;
+        if (b === '__other__') return -1;
+        const pa = prioMap.get(a) ?? 3;
+        const pb = prioMap.get(b) ?? 3;
+        if (pa !== pb) return pa - pb;
+        const la = (PIN_TYPES[a]?.label) || a;
+        const lb = (PIN_TYPES[b]?.label) || b;
+        return _czCompare(la, lb);
+      });
+      const sections = keys.map(k => {
+        const def = k === '__other__'
+          ? { icon: '📦', label: 'Ostatní' }
+          : (PIN_TYPES[k] || { icon: '📍', label: k });
+        const list = byType.get(k);
+        return `
+          <div class="list-group">
+            <div class="list-group-title">${def.icon} ${esc(def.label)} <span class="list-group-count">${list.length}</span></div>
+            <div class="loc-grid">${list.map(l => _renderLocCard(l, colors)).join('')}</div>
+          </div>`;
+      }).join('');
+      return `${sections}${newCard ? `<div class="loc-grid">${newCard}</div>` : ''}`;
+    }
+
+    return `<div class="loc-grid">${locs.map(l => _renderLocCard(l, colors)).join('')}${newCard}</div>`;
   }
 
   function renderLocationList() {
@@ -671,21 +923,38 @@ export const Wiki = (() => {
     const newBtn = EditMode.isActive() ? `
       <a href="#/misto/new" class="list-item-new" style="text-decoration:none">＋ Nové místo</a>` : "";
 
+    // Attitude chip filter — same pattern as /postavy.
+    const attEnum = Store.getEnum('attitudes') || [];
+    const activeAtt = _listState.mista.attitude || null;
+    const allLocs = Store.getLocations();
+    const attFilters = attEnum.map(a => {
+      const count = allLocs.filter(l => Array.isArray(l.attitudes) && l.attitudes.includes(a.id)).length;
+      if (count === 0) return '';
+      const color = a.labelColor || a.bg || '#888';
+      return `<button class="filter-btn filter-btn-attitude ${activeAtt === a.id ? 'active' : ''}"
+        style="--attitude-color: ${esc(color)}"
+        onclick="Wiki.setMistaAttitude('${esc(a.id)}')">●&nbsp;${esc(a.label)} (${count})</button>`;
+    }).filter(Boolean).join('');
+
     return `
       <div class="page-header" style="display:flex;align-items:center;gap:1rem">
         <div style="flex:1">
           <h1>Místa</h1>
-          <div class="subtitle">${shown} / ${total} lokací</div>
+          <div class="subtitle">${shown} / ${total} lokací${activeAtt ? " · " + esc(attEnum.find(a=>a.id===activeAtt)?.label || activeAtt) : ""}</div>
         </div>
         ${newBtn}
       </div>
+      ${attFilters ? `<div class="filter-bar filter-bar-attitudes">
+        <button class="filter-btn ${!activeAtt ? 'active' : ''}" onclick="Wiki.setMistaAttitude('')">Libovolný postoj</button>
+        ${attFilters}
+      </div>` : ''}
       ${_listToolbar('mista', [
+        ['type',      'Typ (seskupeno)'],
         ['name',      'Jméno (A→Z)'],
-        ['type',      'Typ'],
         ['status',    'Stav'],
         ['knowledge', 'Znalost (nejvíc)'],
       ])}
-      <div class="loc-grid" id="wl-mista-grid">${_mistaGridHtml()}</div>
+      <div id="wl-mista-grid">${_mistaGridHtml()}</div>
     `;
   }
 
@@ -697,9 +966,14 @@ export const Wiki = (() => {
     _refreshMistaCount();
   }
   function setMistaSort(v) {
-    _listState.mista.sort = v || 'name';
+    _listState.mista.sort = v || 'type';
     _persistListState();
     _refreshMistaGrid();
+  }
+  function setMistaAttitude(v) {
+    _listState.mista.attitude = v || null;
+    _persistListState();
+    Wiki.renderPage('mista');
   }
   function _refreshMistaGrid() {
     const host = document.getElementById('wl-mista-grid');
@@ -1552,8 +1826,9 @@ export const Wiki = (() => {
   return {
     renderPage,
     renderRankChain,
-    setPostavySearch, setPostavySort,
-    setMistaSearch,   setMistaSort,
+    setPostavySearch, setPostavySort, setPostavyAttitude,
+    setMistaSearch,   setMistaSort,   setMistaAttitude,
     setFrakceSearch,  setFrakceSort,
+    saveCampaignField,
   };
 })();

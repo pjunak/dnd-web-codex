@@ -71,6 +71,10 @@ export const Store = (() => {
       artifacts:        JSON.parse(JSON.stringify(ARTIFACTS)),
       historicalEvents: JSON.parse(JSON.stringify(HISTORICAL_EVENTS)),
       settings:         JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)),
+      // Campaign metadata stored as a keyed-object collection with a
+      // single 'main' record so it round-trips through the existing
+      // PATCH handler (same shape as factions/settings).
+      campaign:         { main: { name: 'O Barvách Draků', tagline: '' } },
       deletedDefaults:  [],
     };
   }
@@ -116,6 +120,62 @@ export const Store = (() => {
         }
       }
     }
+    // Campaign metadata (name + tagline, shown on dashboard hero).
+    // Keyed-object collection with a single 'main' record.
+    if (!_data.campaign || typeof _data.campaign !== 'object' || Array.isArray(_data.campaign)) {
+      _data.campaign = {};
+    }
+    if (!_data.campaign.main || typeof _data.campaign.main !== 'object') {
+      _data.campaign.main = { name: 'O Barvách Draků', tagline: '' };
+    }
+    if (typeof _data.campaign.main.name    !== 'string') _data.campaign.main.name    = 'O Barvách Draků';
+    if (typeof _data.campaign.main.tagline !== 'string') _data.campaign.main.tagline = '';
+  }
+
+  // ── One-shot `mapStatus` → `attitudes[]` migration ────────────
+  // The old `location.mapStatus` (single value from the `mapStatuses`
+  // enum) is superseded by `location.attitudes` (array from the
+  // unified `attitudes` enum). Map the four legacy ids into the new
+  // vocabulary, drop the old field, and remove the stale settings
+  // category. Idempotent — safe to re-run.
+  function _migrateMapStatusToAttitudes() {
+    if (!_data) return false;
+    let changed = false;
+    const IDMAP = { visited: 'ally', enemy: 'enemy', fog: 'unknown', known: 'neutral' };
+    for (const l of _data.locations || []) {
+      let attitudes = Array.isArray(l.attitudes) ? l.attitudes.slice() : null;
+      // Carry legacy mapStatus forward into attitudes if not already set.
+      if (l.mapStatus) {
+        const mapped = IDMAP[l.mapStatus] || 'unknown';
+        if (!attitudes || !attitudes.length) attitudes = [mapped];
+        else if (!attitudes.includes(mapped)) attitudes.push(mapped);
+      }
+      if (attitudes) {
+        if (JSON.stringify(l.attitudes || []) !== JSON.stringify(attitudes)) {
+          l.attitudes = attitudes;
+          changed = true;
+        }
+      }
+      if (l.mapStatus !== undefined) {
+        delete l.mapStatus;
+        changed = true;
+      }
+    }
+    // Remove the stale settings category so the Settings page doesn't
+    // show it. Tombstone it so `_mergeDefaults` doesn't re-seed.
+    if (_data.settings && Array.isArray(_data.settings.mapStatuses)) {
+      delete _data.settings.mapStatuses;
+      changed = true;
+    }
+    if (!Array.isArray(_data.deletedDefaults)) _data.deletedDefaults = [];
+    for (const oldId of ['visited', 'enemy', 'fog', 'known']) {
+      const key = `settings:mapStatuses:${oldId}`;
+      if (!_data.deletedDefaults.includes(key)) {
+        _data.deletedDefaults.push(key);
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   // ── One-shot `captured` status migration ──────────────────────
@@ -146,7 +206,8 @@ export const Store = (() => {
           _mergeDefaults();
           // Idempotent data migrations. Re-saves if anything changed.
           let mutated = false;
-          if (_migrateCapturedStatus()) mutated = true;
+          if (_migrateCapturedStatus())       mutated = true;
+          if (_migrateMapStatusToAttitudes()) mutated = true;
           if (mutated) _persist();
           _reindex();
           return;
@@ -568,6 +629,23 @@ export const Store = (() => {
     return _sync('artifacts', 'delete', { id });
   }
 
+  // ── Campaign metadata (dashboard hero) ────────────────────────
+  // Keyed-object collection with a single 'main' record. Round-trips
+  // through the existing PATCH handler the same way factions do:
+  // PATCH {type:'campaign', action:'save', payload:{id:'main', data:{…}}}
+  // On disk it's just `{ "main": { name, tagline } }`.
+  function getCampaign() {
+    init();
+    const c = (_data.campaign && _data.campaign.main) || {};
+    return { name: c.name || 'O Barvách Draků', tagline: c.tagline || '' };
+  }
+  function setCampaign(patch) {
+    init();
+    if (!_data.campaign || typeof _data.campaign !== 'object') _data.campaign = {};
+    _data.campaign.main = { ...getCampaign(), ...(patch || {}) };
+    return _sync('campaign', 'save', { id: 'main', data: _data.campaign.main });
+  }
+
   // ── Settings (user-editable enums) ────────────────────────────
   // Each category is an array of `{ id, label, ... }` items. See
   // SETTINGS_DEFAULTS in data.js for the shape and seed values.
@@ -616,7 +694,12 @@ export const Store = (() => {
       // currently no enum points at factions, but be defensive.
       const list = Array.isArray(coll) ? coll : Object.values(coll);
       for (const e of list) {
-        if (e && e[b.field] === id) {
+        if (!e) continue;
+        const v = e[b.field];
+        // Array-valued fields (e.g. location.attitudes) are a
+        // usage if any element matches. Scalar fields match by equality.
+        const matched = Array.isArray(v) ? v.includes(id) : v === id;
+        if (matched) {
           out.push({
             collection: b.collection,
             field:      b.field,
@@ -647,7 +730,17 @@ export const Store = (() => {
       for (const b of bindings) {
         const coll = _data[b.collection];
         if (!Array.isArray(coll)) continue;
-        coll.forEach(e => { if (e && e[b.field] === id) e[b.field] = opts.replaceWith; });
+        coll.forEach(e => {
+          if (!e) return;
+          const v = e[b.field];
+          if (Array.isArray(v)) {
+            // Array field: replace matching entries, dedupe.
+            const next = v.map(x => x === id ? opts.replaceWith : x);
+            e[b.field] = [...new Set(next)];
+          } else if (v === id) {
+            e[b.field] = opts.replaceWith;
+          }
+        });
       }
     }
     // Remove the item and tombstone its default so it doesn't reseed.
@@ -1010,6 +1103,7 @@ export const Store = (() => {
     undelete,
     getSettings, getEnum, getEnumValue,
     saveEnumItem, deleteEnumItem, findEnumUsages, resetEnumCategory,
+    getCampaign, setCampaign,
     generateId, reset, exportJS, exportJSON, importJSON,
   };
 })();

@@ -47,15 +47,27 @@ export const WorldMap = (() => {
     return localStorage.getItem(LS_IMG_KEY) || DEFAULT_IMG;
   }
 
-  // Affiliation-based marker colors. Solid fill so pins stand out on the map.
-  // `fg` is the emoji/icon color for contrast against `bg`. `labelColor` is
-  // used on dark UI surfaces (side panel meta, legend dot).
-  const PIN_STATUSES = {
-    visited: { label: 'Spřátelené',  bg: '#2E7D32', fg: '#ffffff', labelColor: '#4CAF50' },
-    enemy:   { label: 'Nepřátelské', bg: '#C62828', fg: '#ffffff', labelColor: '#EF5350' },
-    fog:     { label: 'Neznámé',     bg: '#37474F', fg: '#E8E0C4', labelColor: '#90A4AE' },
-    known:   { label: 'Neutrální',   bg: '#F5F0E4', fg: '#1a1410', labelColor: '#F0E6C8' },
-  };
+  // Pin fill / label colors come from the unified `attitudes` settings
+  // enum (same vocabulary used on character rings and location cards).
+  // `bg` = solid marker fill, `fg` = icon/text color contrast for bg,
+  // `labelColor` = readable chip/legend color on dark UI.
+  // A default fallback handles locations with no attitudes set.
+  function _pinStatuses() {
+    const map = {};
+    for (const a of Store.getEnum('attitudes') || []) {
+      map[a.id] = {
+        label:      a.label || a.id,
+        bg:         a.bg         || '#37474F',
+        fg:         a.fg         || '#E8E0C4',
+        labelColor: a.labelColor || '#90A4AE',
+      };
+    }
+    // `unknown` is the safe default when a location carries no attitudes.
+    if (!map.unknown) {
+      map.unknown = { label: 'Neznámé', bg: '#37474F', fg: '#E8E0C4', labelColor: '#90A4AE' };
+    }
+    return map;
+  }
 
   // ── Pin priority (1 = always visible, 3 = needs high zoom) ────
   // Derive from pin.priority if set, else infer from pin.type so existing
@@ -115,6 +127,7 @@ export const WorldMap = (() => {
   // Pin shape derived from a Location. Map code below operates on this
   // pin-like view; writes go through Store.saveLocation.
   function _pinFromLocation(l) {
+    const attitudes = Array.isArray(l.attitudes) ? l.attitudes : [];
     return {
       id:         l.id,
       locationId: l.id,
@@ -122,7 +135,10 @@ export const WorldMap = (() => {
       x:          l.x,
       y:          l.y,
       type:       l.pinType  || 'custom',
-      status:     l.mapStatus || 'known',
+      // The marker fill uses the first listed attitude — enough signal
+      // at pin size. The side-panel form exposes the full array.
+      status:     attitudes[0] || 'unknown',
+      attitudes,
       priority:   l.priority,
       notes:      l.mapNotes || '',
       parentId:   l.parentId || null,
@@ -353,7 +369,8 @@ export const WorldMap = (() => {
         const patch = { ...loc, x: frac.x, y: frac.y };
         if (_currentParentId) patch.parentId = _currentParentId;
         if (!patch.pinType)   patch.pinType   = 'custom';
-        if (!patch.mapStatus) patch.mapStatus = 'known';
+        // Preserve existing attitudes; only seed an empty array.
+        if (!Array.isArray(patch.attitudes)) patch.attitudes = [];
         Store.saveLocation(patch);
         _refreshPin(loc.id);
         setTimeout(() => zoomToPin(loc.id), 50);
@@ -450,13 +467,13 @@ export const WorldMap = (() => {
   }
 
   function _pinIcon(pin) {
-    const pt   = PIN_TYPES[pin.type]  || PIN_TYPES.custom;
-    const ps   = PIN_STATUSES[pin.status] || PIN_STATUSES.known;
+    const pt       = PIN_TYPES[pin.type]  || PIN_TYPES.custom;
+    const statuses = _pinStatuses();
+    const ps       = statuses[pin.status] || statuses.unknown;
     const size = pin.type === 'major_city' ? 28 : 22;
-    // Dark-bg pins use a subtle dark shadow around the emoji, light-bg pins
-    // use a light shadow. Many emoji are polychrome and ignore `color`; the
-    // shadow gives them a readable outline either way.
-    const lightBg    = pin.status === 'known';
+    // The `party` attitude uses a parchment fill — switch to a light
+    // emoji shadow so the icon stays readable on the bright background.
+    const lightBg    = pin.status === 'party';
     const textShadow = lightBg
       ? '0 0 2px rgba(255,255,255,0.9)'
       : '0 0 2px rgba(0,0,0,0.65)';
@@ -649,9 +666,10 @@ export const WorldMap = (() => {
     const pin = _pinsForCurrent().find(p => p.id === pinId);
     if (!pin) return;
     _editPinId = pinId;
-    const pt = PIN_TYPES[pin.type]  || PIN_TYPES.custom;
-    const ps = PIN_STATUSES[pin.status] || PIN_STATUSES.known;
-    const loc = pin.locationId ? Store.getLocation(pin.locationId) : null;
+    const pt       = PIN_TYPES[pin.type] || PIN_TYPES.custom;
+    const statuses = _pinStatuses();
+    const ps       = statuses[pin.status] || statuses.unknown;
+    const loc      = pin.locationId ? Store.getLocation(pin.locationId) : null;
 
     const subCount = loc ? Store.getSubLocations(loc.id).length : 0;
     const hasLocalMap = !!(loc && loc.localMap);
@@ -662,11 +680,19 @@ export const WorldMap = (() => {
       ? `<div class="sc-pin-meta" style="margin-top:0.4rem">⛬ ${subCount} dílčí ${subCount === 1 ? 'místo' : 'míst(a)'}</div>`
       : '';
 
+    // Show every attitude label (comma-joined) so mixed-stance places
+    // read as "Chrám · Spojenec, Nepřítel" rather than just one of them.
+    const attLabels = (pin.attitudes && pin.attitudes.length ? pin.attitudes : [pin.status])
+      .map(id => {
+        const s = statuses[id];
+        return s ? `<span style="color:${s.labelColor}">${_esc(s.label)}</span>` : '';
+      })
+      .filter(Boolean).join(', ');
     const headerInner = `
       <span class="sc-pin-icon">${pt.icon}</span>
       <div>
         <div class="sc-pin-name">${_esc(pin.name)}</div>
-        <div class="sc-pin-meta">${pt.label} · <span style="color:${ps.labelColor}">${ps.label}</span></div>
+        <div class="sc-pin-meta">${pt.label}${attLabels ? ' · ' + attLabels : ''}</div>
         ${subInfo}
       </div>`;
     const header = loc
@@ -684,7 +710,7 @@ export const WorldMap = (() => {
   }
 
   function _openNewPin(x, y) {
-    _renderPinForm({ x, y, status: 'known', type: 'custom' }, true);
+    _renderPinForm({ x, y, attitudes: [], type: 'custom' }, true);
     document.getElementById('sc-panel').removeAttribute('hidden');
   }
 
@@ -692,8 +718,16 @@ export const WorldMap = (() => {
     _editPinId = pin.id || null;
     const typeOpts = Object.entries(PIN_TYPES)
       .map(([k, v]) => `<option value="${k}" ${pin.type===k?'selected':''}>${v.icon} ${v.label}</option>`).join('');
-    const statusOpts = Object.entries(PIN_STATUSES)
-      .map(([k, v]) => `<option value="${k}" ${pin.status===k?'selected':''}>${v.label}</option>`).join('');
+    // Pin form exposes the full attitudes array so multi-stance places
+    // can be edited from the map without switching to the wiki editor.
+    const pinAtts   = Array.isArray(pin.attitudes) ? pin.attitudes : (pin.status ? [pin.status] : []);
+    const attEnum   = Store.getEnum('attitudes') || [];
+    const attChips  = attEnum.map(a => `
+      <label class="attitude-chip" style="--attitude-color: ${a.labelColor || a.bg || '#888'}">
+        <input type="checkbox" value="${_esc(a.id)}" ${pinAtts.includes(a.id) ? 'checked' : ''}>
+        <span class="attitude-chip-dot"></span>
+        <span class="attitude-chip-label">${_esc(a.label)}</span>
+      </label>`).join('');
     const currentPri = _priorityOf(pin);
     const priLabels  = { 1: '1 — Vždy viditelné', 2: '2 — Střední zoom', 3: '3 — Detailní zoom' };
     const priOpts = [1, 2, 3].map(p =>
@@ -722,8 +756,8 @@ export const WorldMap = (() => {
         <input class="sc-input" id="spf-name" type="text" value="${_esc(pin.name||'')}" placeholder="Waterdeep...">
         <label class="sc-label">Typ</label>
         <select class="sc-input" id="spf-type">${typeOpts}</select>
-        <label class="sc-label">Příslušnost</label>
-        <select class="sc-input" id="spf-status">${statusOpts}</select>
+        <label class="sc-label">Postoje k partě <span class="sc-hint">(víc = rozdělený prstenec na kartě)</span></label>
+        <div class="attitude-chip-row" id="spf-attitudes">${attChips}</div>
         <label class="sc-label">Důležitost (priorita zobrazení)</label>
         <div class="sc-pri-row" id="spf-priority">${priOpts}</div>
         <label class="sc-label">Popis / Poznámky na mapě</label>
@@ -746,9 +780,13 @@ export const WorldMap = (() => {
     if (!name) { alert('Název je povinný.'); return; }
     const priRaw = document.querySelector('#spf-priority input[name="spf-priority"]:checked')?.value;
     const priority = priRaw ? parseInt(priRaw, 10) : undefined;
-    const pinType   = document.getElementById('spf-type')?.value   || 'custom';
-    const mapStatus = document.getElementById('spf-status')?.value || 'known';
-    const mapNotes  = document.getElementById('spf-notes')?.value  || '';
+    const pinType  = document.getElementById('spf-type')?.value   || 'custom';
+    const mapNotes = document.getElementById('spf-notes')?.value  || '';
+    // Multi-attitude: read every checked chip. Empty = no stance set,
+    // card renders with no ring.
+    const attitudes = Array.from(
+      document.querySelectorAll('#spf-attitudes input[type="checkbox"]:checked')
+    ).map(i => i.value);
 
     let loc = null;
     if (isNew) {
@@ -756,7 +794,7 @@ export const WorldMap = (() => {
       if (existingId) loc = Store.getLocation(existingId);
       if (!loc) {
         const newId = 'loc_' + Store.generateId(name) + '_' + Date.now();
-        loc = { id: newId, name, type: '', status: '', description: '', notes: '', characters: [] };
+        loc = { id: newId, name, type: '', status: '', description: '', notes: '' };
       }
       loc = { ...loc, name, x, y };
     } else {
@@ -765,11 +803,14 @@ export const WorldMap = (() => {
       loc = { ...loc, name };
     }
     if (_currentParentId) loc.parentId = _currentParentId;
-    loc.pinType   = pinType;
-    loc.mapStatus = mapStatus;
-    loc.mapNotes  = mapNotes;
+    loc.pinType    = pinType;
+    loc.attitudes  = attitudes;
+    loc.mapNotes   = mapNotes;
     if (priority === 1 || priority === 2 || priority === 3) loc.priority = priority;
     else delete loc.priority;
+    // Drop any legacy mapStatus so old data doesn't shadow the new
+    // attitudes[] field once this location is saved.
+    delete loc.mapStatus;
     Store.saveLocation(loc);
     _refreshPin(loc.id);
     _openPinPanel(loc.id);
@@ -788,6 +829,8 @@ export const WorldMap = (() => {
     delete cleaned.x; delete cleaned.y;
     delete cleaned.priority;
     delete cleaned.pinType; delete cleaned.mapStatus; delete cleaned.mapNotes;
+    // Attitudes describe the place itself, not its pin presence, so they
+    // survive an "unplace" action — keep them in the Location record.
     Store.saveLocation(cleaned);
     if (_markers[pinId]) { _markers[pinId].remove(); delete _markers[pinId]; }
     closePanel();
@@ -1038,8 +1081,8 @@ export const WorldMap = (() => {
     leg.innerHTML = `
       <div class="legend-title">Zoom: ${priText}</div>
       ${hint}
-      <div class="legend-title" style="margin-top:0.6rem">Příslušnost</div>
-      ${Object.entries(PIN_STATUSES).map(([, v]) =>
+      <div class="legend-title" style="margin-top:0.6rem">Postoj k partě</div>
+      ${(Store.getEnum('attitudes') || []).map(v =>
         `<div class="legend-item">
           <div class="legend-dot" style="background:${v.bg};box-shadow:0 0 0 1px rgba(0,0,0,0.4)"></div>
           ${v.label}

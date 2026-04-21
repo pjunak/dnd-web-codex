@@ -143,12 +143,21 @@ export const SETTINGS_DEFAULTS = {
     { id: 'nízká',    label: 'Nízká',    color: '#689F38' },
   ],
 
-  // Map affiliation (colors marker fill on the Sword Coast map).
-  mapStatuses: [
-    { id: 'visited', label: 'Spřátelené',  bg: '#2E7D32', fg: '#ffffff', labelColor: '#4CAF50' },
-    { id: 'enemy',   label: 'Nepřátelské', bg: '#C62828', fg: '#ffffff', labelColor: '#EF5350' },
-    { id: 'fog',     label: 'Neznámé',     bg: '#37474F', fg: '#E8E0C4', labelColor: '#90A4AE' },
-    { id: 'known',   label: 'Neutrální',   bg: '#F5F0E4', fg: '#1a1410', labelColor: '#F0E6C8' },
+  // Unified attitude palette — used BOTH on character cards (single
+  // value via `character.attitude`) AND on location cards / map pins
+  // (array via `location.attitudes[]`, rendered as a split ring when
+  // more than one). Replaces the old `mapStatuses` category. Party
+  // members (faction==='party') render white regardless of any
+  // attitude value, so the `party` id is primarily used for pins on
+  // our strongholds. `bg` = solid fill, `fg` = text/icon contrast,
+  // `labelColor` = readable chip color on dark UI.
+  attitudes: [
+    { id: 'ally',    label: 'Spojenec',   bg: '#2E7D32', fg: '#ffffff', labelColor: '#4CAF50' },
+    { id: 'enemy',   label: 'Nepřítel',   bg: '#C62828', fg: '#ffffff', labelColor: '#EF5350' },
+    { id: 'hostile', label: 'Nebezpečný', bg: '#1a1410', fg: '#E8E0C4', labelColor: '#9E9E9E' },
+    { id: 'neutral', label: 'Neutrální',  bg: '#1565C0', fg: '#ffffff', labelColor: '#64B5F6' },
+    { id: 'unknown', label: 'Neznámý',    bg: '#6A1B9A', fg: '#ffffff', labelColor: '#BA68C8' },
+    { id: 'party',   label: 'Parta',      bg: '#F5F0E4', fg: '#1a1410', labelColor: '#F0E6C8' },
   ],
 
   // User-defined map view presets. Each entry captures the bounds
@@ -162,7 +171,10 @@ export const SETTINGS_DEFAULTS = {
 
 /** Which collection+field each settings category is referenced from.
  *  `Store.findEnumUsages(cat, id)` walks these bindings. Defined here
- *  so the mapping is co-located with the defaults.                  */
+ *  so the mapping is co-located with the defaults.
+ *
+ *  `attitudes` has two bindings: character.attitude (single value) and
+ *  location.attitudes (array). findEnumUsages handles both shapes.    */
 export const SETTINGS_USAGE_MAP = {
   relationshipTypes: [{ collection: 'relationships', field: 'type' }],
   genders:           [{ collection: 'characters',    field: 'gender' }],
@@ -170,5 +182,8 @@ export const SETTINGS_USAGE_MAP = {
   artifactStates:    [{ collection: 'artifacts',     field: 'state' }],
   characterStatuses: [{ collection: 'characters',    field: 'status' }],
   eventPriorities:   [{ collection: 'events',        field: 'priority' }],
-  mapStatuses:       [{ collection: 'locations',     field: 'mapStatus' }],
+  attitudes:         [
+    { collection: 'characters', field: 'attitude'  },
+    { collection: 'locations',  field: 'attitudes' },
+  ],
 };

@@ -147,6 +147,16 @@ export const EditTemplates = (() => {
       `<option value="${id}" ${c.faction===id?"selected":""}>${f.badge} ${f.name}</option>`).join("");
     const sOpts = Object.entries(statusMap).map(([id,s]) =>
       `<option value="${id}" ${c.status===id?"selected":""}>${s.icon} ${s.label}</option>`).join("");
+    // Attitude (single-pick for characters — one stance toward the party).
+    // Party members implicitly carry the `party` color via faction, so the
+    // field stays optional; blank = display as `unknown` with no ring color.
+    const attitudeEnum = Store.getEnum('attitudes') || [];
+    const aOpts = [
+      `<option value="" ${!c.attitude ? 'selected' : ''}>— neznámý —</option>`,
+      ...attitudeEnum
+        .filter(a => a.id !== 'party')  // party auto-derived from faction
+        .map(a => `<option value="${_esc(a.id)}" ${c.attitude===a.id?'selected':''}>${_esc(a.label)}</option>`),
+    ].join('');
     const knownRows   = (c.known   || []).map(_dynRow).join("");
     const unknownRows = (c.unknown || []).map(_dynRow).join("");
     const badge = factions[c.faction]?.badge || "👤";
@@ -219,7 +229,7 @@ export const EditTemplates = (() => {
                   <input class="edit-input" id="ef-title-${uid}" value="${_esc(c.title)}" placeholder="Titul nebo profese">
                 </div>
               </div>
-              <div class="edit-row-2">
+              <div class="edit-row-3">
                 <div class="edit-field">
                   <label class="edit-label">Frakce</label>
                   <select class="edit-select" id="ef-faction-${uid}">${fOpts}</select>
@@ -227,6 +237,10 @@ export const EditTemplates = (() => {
                 <div class="edit-field">
                   <label class="edit-label">Status</label>
                   <select class="edit-select" id="ef-status-${uid}">${sOpts}</select>
+                </div>
+                <div class="edit-field">
+                  <label class="edit-label" title="Jak se postava staví k partě">Postoj k partě</label>
+                  <select class="edit-select" id="ef-attitude-${uid}">${aOpts}</select>
                 </div>
               </div>
               <div class="edit-row-3">
@@ -341,6 +355,18 @@ export const EditTemplates = (() => {
       data-cb-empty-label="— žádné (samostatné místo) —"
       data-cb-placeholder="Vyber rodičovské místo…"></div>`;
 
+    // Attitudes toward the party (multi-select). A place can hold a
+    // mixed stance: "Chrám je spojenec, ale v kryptě žijí nepřátelé."
+    // Stored as an array; the location card renders a split ring.
+    const locAttitudes = Array.isArray(l.attitudes) ? l.attitudes : [];
+    const locAttitudeEnum = Store.getEnum('attitudes') || [];
+    const attitudeChips = locAttitudeEnum.map(a => `
+      <label class="attitude-chip" style="--attitude-color: ${_esc(a.labelColor || a.bg || '#888')}">
+        <input type="checkbox" value="${_esc(a.id)}" ${locAttitudes.includes(a.id) ? 'checked' : ''}>
+        <span class="attitude-chip-dot"></span>
+        <span class="attitude-chip-label">${_esc(a.label)}</span>
+      </label>`).join('');
+
     const onMap = (typeof l.x === 'number' && typeof l.y === 'number');
     const mapBadge = onMap
       ? `<span class="badge" style="background:rgba(46,125,50,0.18);color:#a5d6a7">📍 Na mapě</span>`
@@ -389,6 +415,10 @@ export const EditTemplates = (() => {
               onchange="EditMode.onLocationStatusChange('${uid}')">${statusOpts}</select>
             <input class="edit-input" id="lf-status-custom-${uid}" type="text"
               placeholder="Zadej vlastní status…" style="margin-top:0.4rem;display:none">
+          </div>
+          <div class="edit-field">
+            <label class="edit-label">Postoje k partě <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">— vyber jeden nebo víc; karta pak ukáže rozdělený prstenec</span></label>
+            <div class="attitude-chip-row" id="lf-attitudes-${uid}">${attitudeChips}</div>
           </div>
           <div class="edit-field">
             <label class="edit-label">Záhadné poznámky</label>

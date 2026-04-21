@@ -287,13 +287,13 @@ const ALLOWED_TYPES = new Set([
   'characters', 'relationships', 'locations', 'events',
   'mysteries', 'factions', 'deletedDefaults',
   'species', 'pantheon', 'artifacts', 'settings',
-  'historicalEvents',
+  'historicalEvents', 'campaign',
 ]);
 const ALL_TYPES = [
   'characters', 'relationships', 'locations', 'events',
   'mysteries', 'factions', 'deletedDefaults',
   'species', 'pantheon', 'artifacts', 'settings',
-  'historicalEvents',
+  'historicalEvents', 'campaign',
 ];
 
 app.get('/api/data', (_req, res) => {
@@ -400,9 +400,10 @@ app.patch('/api/data', requireAuth, (req, res) => {
     }
 
     const p = getFile(type);
-    // Keyed-object collections: factions (id → record) and settings
-    // (category → array). Everything else is an entity list.
-    let container = (type === 'factions' || type === 'settings') ? {} : [];
+    // Keyed-object collections: factions (id → record), settings
+    // (category → array), and campaign (single 'main' record).
+    // Everything else is an entity list.
+    let container = (type === 'factions' || type === 'settings' || type === 'campaign') ? {} : [];
     if (fs.existsSync(p)) container = JSON.parse(fs.readFileSync(p, 'utf8'));
 
     // Auto-migrate portrait to canonical subfolder on character save

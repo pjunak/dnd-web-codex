@@ -403,6 +403,7 @@ export const EditMode = (() => {
       title:       document.getElementById(`ef-title-${uid}`)?.value.trim()        || "",
       faction:     document.getElementById(`ef-faction-${uid}`)?.value             || "neutral",
       status:      document.getElementById(`ef-status-${uid}`)?.value              || "alive",
+      attitude:    document.getElementById(`ef-attitude-${uid}`)?.value             || "",
       species:     document.getElementById(`ef-species-${uid}`)?.value.trim()      || "",
       gender,
       age:         document.getElementById(`ef-age-${uid}`)?.value.trim()          || "",
@@ -560,9 +561,10 @@ export const EditMode = (() => {
     const name = document.getElementById(`lf-name-${uid}`)?.value.trim();
     if (!name) { _toast("Název je povinný", false); return; }
     const newId = originalId || Store.generateId(name);
-    // Preserve map-only fields (x, y, pinType, mapStatus, priority, mapNotes)
+    // Preserve map-only fields (x, y, pinType, priority, mapNotes)
     // that this form doesn't expose. Only the wiki form would clobber them
     // otherwise; the map's own pin form remains the place to edit them.
+    // Attitudes are now exposed in both forms and stay in sync.
     // Note: location.characters is no longer written here — character.location
     // is the canonical source of truth, managed via the MultiSelect picker.
     const existing = originalId ? (Store.getLocation(originalId) || {}) : {};
@@ -582,12 +584,19 @@ export const EditMode = (() => {
       statusVal = document.getElementById(`lf-status-custom-${uid}`)?.value.trim() || "";
     }
 
+    // Attitude chips (multi-select). Read every checked input inside
+    // the chip row; empty array = no attitude set (rendered as unknown).
+    const attitudes = Array.from(
+      document.querySelectorAll(`#lf-attitudes-${uid} input[type="checkbox"]:checked`)
+    ).map(i => i.value);
+
     Store.saveLocation({
       ...existing,
       id: newId, name,
       pinType:     pinTypeKey || existing.pinType || undefined,
       type:        typeLabel,
       status:      statusVal,
+      attitudes,
       description: document.getElementById(`lf-desc-${uid}`)?.value.trim()   || "",
       notes:       document.getElementById(`lf-notes-${uid}`)?.value.trim()  || "",
       parentId:    parentId || undefined,

@@ -38,6 +38,239 @@
 }
 
 /* ── Dashboard ──────────────────────────────────────────────── */
+/* Hero: campaign name + tagline. In edit mode both become
+   contenteditable regions with a subtle hover affordance. */
+.dash-hero {
+  text-align: center;
+  padding: 1.5rem 1rem 1.25rem;
+  margin-bottom: 2rem;
+  position: relative;
+}
+.dash-hero::after {
+  content: '';
+  display: block;
+  width: 180px;
+  height: 2px;
+  margin: 1rem auto 0;
+  background: linear-gradient(90deg, transparent, var(--accent-gold), transparent);
+}
+.dash-hero-name {
+  font-family: var(--font-title);
+  font-size: 2.6rem;
+  color: var(--accent-gold);
+  letter-spacing: 0.06em;
+  margin: 0 0 0.25rem;
+  outline: none;
+}
+.dash-hero-tagline {
+  font-family: var(--font-ui);
+  font-size: 0.92rem;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  min-height: 1.2em;
+  outline: none;
+}
+.dash-hero.is-editing .dash-hero-name,
+.dash-hero.is-editing .dash-hero-tagline {
+  border: 1px dashed rgba(200,160,64,0.0);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  transition: border-color 0.12s, background 0.12s;
+  cursor: text;
+}
+.dash-hero.is-editing .dash-hero-name:hover,
+.dash-hero.is-editing .dash-hero-tagline:hover,
+.dash-hero.is-editing .dash-hero-name:focus,
+.dash-hero.is-editing .dash-hero-tagline:focus {
+  border-color: rgba(200,160,64,0.4);
+  background: rgba(200,160,64,0.05);
+}
+.dash-hero.is-editing .dash-hero-tagline:empty::before {
+  content: attr(data-placeholder);
+  color: rgba(200,160,64,0.4);
+  font-style: italic;
+}
+
+/* Section frame shared by all dashboard sections below the hero. */
+.dash-section {
+  margin-bottom: 2rem;
+}
+.dash-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+.dash-section-head h2 {
+  font-family: var(--font-title);
+  font-size: 1.1rem;
+  color: var(--accent-gold);
+  letter-spacing: 0.05em;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.dash-section-action {
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.12s;
+}
+.dash-section-action:hover { color: var(--accent-gold); }
+.dash-session-badge {
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.05);
+  padding: 0.15em 0.6em;
+  border-radius: 100px;
+}
+.dash-empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Party grid — responsive auto-fill so it spreads across any width. */
+.dash-party-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 1rem;
+}
+.dash-party-card {
+  background: var(--bg-raised);
+  border: 1px solid rgba(200,160,64,0.2);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem;
+  text-decoration: none;
+  color: var(--text-parchment);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.2s;
+}
+.dash-party-card:hover {
+  border-color: var(--accent-gold);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.4);
+}
+.dash-party-portrait {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 0 0 2px rgba(240,230,200,0.25);
+}
+.dash-party-portrait .portrait-wrap { width: 100%; height: 100%; border-radius: 50%; }
+.dash-party-portrait .portrait-img,
+.dash-party-portrait .portrait-placeholder {
+  width: 100%; height: 100%; object-fit: cover; object-position: top;
+}
+.dash-party-body { text-align: center; width: 100%; }
+.dash-party-name {
+  font-family: var(--font-title);
+  font-size: 0.92rem;
+  color: var(--text-parchment);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  justify-content: center;
+}
+.dash-party-status {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+}
+.dash-party-status[data-status="alive"]    { background: #4CAF50; }
+.dash-party-status[data-status="dead"]     { background: #8B0000; }
+.dash-party-status[data-status="unknown"]  { background: #9575CD; }
+.dash-party-title {
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+.dash-party-loc {
+  margin-top: 0.4rem;
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  color: rgba(120,200,120,0.85);
+  padding: 0.2rem 0.5rem;
+  border-radius: 100px;
+  background: rgba(120,200,120,0.08);
+  border: 1px solid rgba(120,200,120,0.2);
+}
+.dash-party-card-new {
+  border-style: dashed;
+  border-color: rgba(200,160,64,0.3);
+  color: var(--text-muted);
+  justify-content: center;
+}
+.dash-party-card-new:hover { background: rgba(200,160,64,0.06); color: var(--accent-gold); }
+.dash-party-add {
+  font-size: 2.4rem;
+  color: rgba(200,160,64,0.6);
+}
+
+/* Last session + mysteries rows share a similar look. */
+.dash-event-list, .dash-mystery-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.dash-event-row, .dash-mystery-row {
+  display: block;
+  padding: 0.75rem 1rem;
+  background: var(--bg-raised);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--radius);
+  text-decoration: none;
+  transition: border-color 0.12s, background 0.12s;
+}
+.dash-event-row:hover, .dash-mystery-row:hover {
+  border-color: rgba(200,160,64,0.3);
+  background: rgba(200,160,64,0.03);
+}
+.dash-event-name, .dash-mystery-name {
+  font-family: var(--font-title);
+  font-size: 0.95rem;
+  color: var(--text-parchment);
+  margin-bottom: 0.2rem;
+}
+.dash-event-short {
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 0.3rem;
+}
+.dash-event-meta {
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+.dash-mystery-q {
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.3rem;
+  font-style: italic;
+}
+
+/* Legacy classes kept as aliases for anything outside the dashboard
+   that still references them (e.g. stray external links). */
 .dashboard-title {
   font-family: var(--font-title);
   font-size: 2.4rem;
@@ -209,6 +442,107 @@
   font-family: var(--font-ui);
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+/* ── Attitude ring (character/location cards) ──────────────────
+   The inline `--attitude-ring` is either a solid color or a
+   conic-gradient (split ring for multi-attitude locations). A
+   ::before pseudo-element sits behind the card and only its 3px
+   overflow at the edges is visible, giving a ring effect. Uses
+   `isolation: isolate` so the pseudo-element's z-index stacks
+   locally inside the card and doesn't sink behind the page. */
+.has-attitude-ring {
+  position: relative;
+  isolation: isolate;
+}
+.has-attitude-ring::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: calc(var(--radius-lg) + 3px);
+  background: var(--attitude-ring, transparent);
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* ── List section grouping (by faction / pinType) ──────────── */
+.list-group { margin-bottom: 1.6rem; }
+.list-group-title {
+  font-family: var(--font-title);
+  font-size: 1rem;
+  color: var(--accent-gold);
+  letter-spacing: 0.04em;
+  margin: 0.6rem 0 0.6rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid rgba(200,160,64,0.2);
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.list-group-count {
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.06);
+  padding: 0.1em 0.5em;
+  border-radius: 100px;
+}
+
+/* ── Attitude chip rows (editors + pin form) ───────────────── */
+.attitude-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.attitude-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.6rem 0.3rem 0.4rem;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 100px;
+  background: rgba(255,255,255,0.03);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  color: var(--text-parchment);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.attitude-chip:hover { background: rgba(255,255,255,0.06); }
+.attitude-chip input { display: none; }
+.attitude-chip-dot {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: var(--attitude-color, #888);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+  flex-shrink: 0;
+}
+.attitude-chip:has(input:checked),
+.attitude-chip input:checked + .attitude-chip-dot {
+  /* :has fallback + specific chip styling when checked */
+}
+.attitude-chip:has(input:checked) {
+  border-color: var(--attitude-color, var(--accent-gold));
+  background: color-mix(in srgb, var(--attitude-color, #888) 12%, transparent);
+}
+
+/* Attitude filter pills on list pages */
+.filter-bar-attitudes { margin-top: -0.5rem; }
+.filter-btn-attitude {
+  padding-left: 0.5rem;
+  border-color: color-mix(in srgb, var(--attitude-color, #888) 45%, transparent);
+  color: var(--attitude-color, inherit);
+}
+.filter-btn-attitude.active {
+  background: color-mix(in srgb, var(--attitude-color, #888) 18%, transparent);
+  border-color: var(--attitude-color, var(--accent-gold));
+}
+
+/* ── Attitude chip on article side card ────────────────────── */
+.badge-attitude {
+  font-weight: 600;
 }
 
 /* ── Badges & Pills ─────────────────────────────────────────── */
