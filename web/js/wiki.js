@@ -72,13 +72,18 @@ export const Wiki = (() => {
     }
     return map;
   }
+  // `unknown` is intentionally colorless — a character or place whose
+  // allegiance hasn't been established shouldn't draw a ring. The
+  // helpers below skip it so no ring class is added at all.
   function _characterRing(c, colors) {
     if (c.faction === PARTY_FACTION_ID) return colors.party || '#F0E6C8';
-    if (c.attitude && colors[c.attitude]) return colors[c.attitude];
+    if (c.attitude && c.attitude !== 'unknown' && colors[c.attitude]) return colors[c.attitude];
     return '';
   }
   function _locationRing(l, colors) {
-    const ids = Array.isArray(l.attitudes) ? l.attitudes.filter(x => colors[x]) : [];
+    const ids = Array.isArray(l.attitudes)
+      ? l.attitudes.filter(x => x !== 'unknown' && colors[x])
+      : [];
     if (ids.length === 0) return '';
     if (ids.length === 1) return colors[ids[0]];
     const step = 100 / ids.length;

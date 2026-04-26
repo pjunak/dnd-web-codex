@@ -139,13 +139,18 @@
   font-style: italic;
 }
 
-/* Party grid — responsive auto-fill so it spreads across any width. */
+/* Party row — flex with wrap so cards center horizontally when there
+   are fewer of them than fit a row. Fixed card width keeps sizes
+   consistent; rows wrap naturally on narrow viewports. */
 .dash-party-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 1rem;
 }
 .dash-party-card {
+  flex: 0 0 auto;
+  width: 180px;
   background: var(--bg-raised);
   border: 1px solid rgba(200,160,64,0.2);
   border-radius: var(--radius-lg);
@@ -446,23 +451,29 @@
 
 /* ── Attitude ring (character/location cards) ──────────────────
    The inline `--attitude-ring` is either a solid color or a
-   conic-gradient (split ring for multi-attitude locations). A
-   ::before pseudo-element sits behind the card and only its 3px
-   overflow at the edges is visible, giving a ring effect. Uses
-   `isolation: isolate` so the pseudo-element's z-index stacks
-   locally inside the card and doesn't sink behind the page. */
+   conic-gradient (split ring for multi-attitude locations). The
+   pseudo-element sits on top of the card at `inset: 0` with 3px
+   padding; the CSS mask-composite trick hollows out the content
+   area so ONLY the 3px padding edge (= the ring) is visible. This
+   lets us survive `overflow: hidden` on card bodies without hacks.
+   pointer-events:none keeps the underlying card clickable. */
 .has-attitude-ring {
   position: relative;
-  isolation: isolate;
 }
 .has-attitude-ring::before {
   content: '';
   position: absolute;
-  inset: -3px;
-  border-radius: calc(var(--radius-lg) + 3px);
+  inset: 0;
+  border-radius: inherit;
+  padding: 3px;
   background: var(--attitude-ring, transparent);
-  z-index: -1;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
   pointer-events: none;
+  z-index: 3;
 }
 
 /* ── List section grouping (by faction / pinType) ──────────── */
