@@ -739,11 +739,12 @@ export const CloudMap = (() => {
     COLLISION_KICK: 0.55,
     PADDING:        14,     // collision bbox padding around each node
     MAX_VEL:        45,     // hard cap to keep things stable
-    GRAVITY:        0.0060, // pull toward viewport centre during autolayout
-                            // — bumped from 0.0040 to keep the occasional
-                            // outlier (a leaf node with no/few connections,
-                            // initialised far from centre by random scatter)
-                            // from getting stranded at the edge of the layout
+    GRAVITY:        0.0090, // pull toward viewport centre during autolayout
+                            // — bumped to keep leaf/isolated nodes from
+                            // drifting to the rim. With bbox-aware repulsion
+                            // and edge-vs-node repulsion now keeping things
+                            // spread out, gravity can be stronger without
+                            // collapsing the layout.
     ENERGY_SLEEP:   0.05,   // total KE per node to allow the loop to sleep
     AUTOLAYOUT_MS:  3500,   // how long the FR cooldown takes
   };
@@ -987,29 +988,39 @@ export const CloudMap = (() => {
   // Single layer with TWO CSS properties:
   //   `zoom: <currentZoom>` — re-flows layout + re-rasterises text,
   //                           giving crisp text at any scale.
-  //   `transform: translate(panX/zoom, panY/zoom)` — pan in CSS px.
+  //   `left/top: pan / zoom` — pan via positioned offsets, NOT a
+  //                            transform.
   //
-  // CRITICAL: when the parent has `zoom: Z`, transform-translate values
-  // are interpreted in the ZOOMED coordinate system, so a written
-  // `translate(N px)` moves the element by `N · Z` actual screen px.
-  // To get an actual on-screen translation of `pan` (which is what
-  // Cytoscape's pan represents — see _cy.pan()), we must write
-  // `translate(pan / zoom px)` so that `(pan / zoom) · zoom = pan` on
-  // screen. Forgetting this divide-by-zoom is what made the layer
-  // pan at zoom·rate (so dragging at zoom=0.33 looked like "1/3
-  // scale" panning) and shifted both wheel-zoom-around-cursor and
-  // node hit-testing toward the layer's top-left corner.
+  // Why left/top instead of `transform: translate()`: any `transform`
+  // on the layer promotes it to a GPU compositing layer, which means
+  // the entire subtree gets rasterised to a single texture and that
+  // texture is then blit-with-scaling on every frame. Browsers don't
+  // always re-rasterise the cached texture when `zoom` changes — they
+  // resample, which is exactly the rasterise-then-rescale blur we've
+  // been fighting. Using `left`/`top` for pan keeps the layer on the
+  // CPU paint path, so each zoom change forces a clean re-paint at
+  // the new effective DPI and text stays crisp.
+  //
+  // CRITICAL: when the parent has `zoom: Z`, child position values
+  // (`left`/`top`) are interpreted in the ZOOMED coordinate system,
+  // so `left: N px` shifts by `N · Z` actual screen px. Cytoscape's
+  // `_cy.pan()` is in actual screen px, so we write
+  // `left: pan / zoom px` so the on-screen offset works out to
+  // `(pan / zoom) · zoom = pan`. Same divide-by-zoom rule as the
+  // old transform-translate version — just on left/top now.
   //
   // Cards positioned in graph coordinates at native size — the layer's
   // `zoom` shrinks/grows them visually, and the browser re-renders
-  // text at the new effective size rather than blit a cached texture.
+  // text at the new effective size on every zoom change.
   function _sync() {
     if (!_cy || !_cloudLayer) return;
     const pan  = _cy.pan();
     const zoom = _cy.zoom();
 
     _cloudLayer.style.zoom = zoom;
-    _cloudLayer.style.transform = `translate(${pan.x / zoom}px,${pan.y / zoom}px)`;
+    _cloudLayer.style.left = (pan.x / zoom) + 'px';
+    _cloudLayer.style.top  = (pan.y / zoom) + 'px';
+    _cloudLayer.style.transform = '';
 
     _cy.nodes().forEach(node => {
       const id = node.id();
@@ -1543,11 +1554,24 @@ export const CloudMap = (() => {
       if (v) { v.vx = 0; v.vy = 0; }
     });
 
-    // Cache positions to avoid repeated property access in O(N²) loop.
+    // Cache positions + half-extents per node for the inner loops.
+    // Bounding-box-aware repulsion: standard FR treats nodes as
+    // points, so two big cards at center-distance k can still have
+    // their visible boxes nearly touching. We subtract the sum of
+    // each pair's half-extents (projected onto the chord) from the
+    // distance so big cards get more breathing room.
     const ps = new Array(N);
-    for (let i = 0; i < N; i++) ps[i] = { id: nodes[i].id(), p: nodes[i].position() };
+    for (let i = 0; i < N; i++) {
+      const n = nodes[i];
+      ps[i] = {
+        id: n.id(),
+        p:  n.position(),
+        hw: n.data('w') / 2,
+        hh: n.data('h') / 2,
+      };
+    }
 
-    // Pairwise repulsion
+    // ── Pairwise node-node repulsion (bbox-aware) ──
     for (let i = 0; i < N; i++) {
       const a = ps[i];
       const va = _phys.nodeVel.get(a.id);
@@ -1557,7 +1581,7 @@ export const CloudMap = (() => {
         const dy = b.p.y - a.p.y;
         let dist = Math.hypot(dx, dy);
         if (dist < 1) {
-          // Coincident nodes: push them apart with a tiny random kick
+          // Coincident: random kick to break symmetry
           dist = 1;
           const jx = Math.random() - 0.5, jy = Math.random() - 0.5;
           if (va) { va.vx -= jx; va.vy -= jy; }
@@ -1565,22 +1589,33 @@ export const CloudMap = (() => {
           if (vb0) { vb0.vx += jx; vb0.vy += jy; }
           continue;
         }
-        const force = (k * k) / dist;
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
+        // Effective separation = center-distance minus the projected
+        // half-extents. Approximate the projected half-extent of each
+        // bbox onto the chord direction with a chord-aligned ellipse:
+        // bboxRadiusAlongChord = √((hw·ux)² + (hh·uy)²)
+        const ux = dx / dist, uy = dy / dist;
+        const aBB = Math.hypot(a.hw * ux, a.hh * uy);
+        const bBB = Math.hypot(b.hw * ux, b.hh * uy);
+        // Add a small breathing pad so cards don't kiss at equilibrium.
+        const sep = Math.max(2, dist - aBB - bBB - 8);
+        const force = (k * k) / sep;
+        const fx = ux * force;
+        const fy = uy * force;
         if (va) { va.vx -= fx; va.vy -= fy; }
         const vb = _phys.nodeVel.get(b.id);
         if (vb) { vb.vx += fx; vb.vy += fy; }
       }
     }
 
-    // Edge attraction
+    // ── Edge attraction (FR's d²/k) ──
+    const edgesArr = [];
     _cy.edges().forEach(edge => {
       if (edge.hasClass('cm-filter-hidden')) return;
       const sId = edge.source().id();
       const tId = edge.target().id();
       const sp = edge.source().position();
       const tp = edge.target().position();
+      edgesArr.push({ sId, tId, sp, tp });
       const dx = tp.x - sp.x, dy = tp.y - sp.y;
       let dist = Math.hypot(dx, dy);
       if (dist < 1) dist = 1;
@@ -1593,7 +1628,50 @@ export const CloudMap = (() => {
       if (vt) { vt.vx -= fx; vt.vy -= fy; }
     });
 
-    // Gravity toward viewport centre (compactness)
+    // ── Edge-vs-node repulsion ──
+    // For each non-endpoint node, push it away from every edge segment
+    // it's too close to. Stops edges from passing through unrelated
+    // nodes (which FR's center-only repulsion can't prevent — A and B
+    // can be far apart with C far from both, yet the line AB still cuts
+    // through C's visible bounding box). We only push the third node
+    // (perpendicular away from the segment), not the endpoints, so
+    // the underlying topology isn't disturbed.
+    const EDGE_REPEL_THRESHOLD = avgNodeSize * 0.85;
+    const EDGE_REPEL_K = (k * k) * 0.18;   // calibrated against pair repulsion
+    for (const e of edgesArr) {
+      const ax = e.sp.x, ay = e.sp.y, bx = e.tp.x, by = e.tp.y;
+      const abx = bx - ax, aby = by - ay;
+      const ablen2 = abx * abx + aby * aby;
+      if (ablen2 < 1) continue;
+      for (let i = 0; i < N; i++) {
+        const n = ps[i];
+        if (n.id === e.sId || n.id === e.tId) continue;
+        // Project N onto AB, clamped to the segment.
+        let t = ((n.p.x - ax) * abx + (n.p.y - ay) * aby) / ablen2;
+        if (t < 0) t = 0; else if (t > 1) t = 1;
+        const cx = ax + t * abx, cy = ay + t * aby;
+        const dx = n.p.x - cx, dy = n.p.y - cy;
+        const dist = Math.hypot(dx, dy);
+        // Use the node's projected half-extent (chord-aligned ellipse)
+        // as the "radius" so bigger cards demand more clearance.
+        const ux = dist > 0.01 ? dx / dist : 0;
+        const uy = dist > 0.01 ? dy / dist : 1;
+        const nodeBB = Math.hypot(n.hw * uy, n.hh * ux);  // perpendicular extent
+        const minDist = nodeBB + EDGE_REPEL_THRESHOLD * 0.5;
+        if (dist >= minDist || dist < 0.01) continue;
+        // Magnitude grows as the node nears the segment; symmetrical
+        // with FR's k²/d so the forces are comparable in scale.
+        const proximity = (minDist - dist) / minDist;
+        const force = EDGE_REPEL_K * proximity / Math.max(1, dist);
+        const v = _phys.nodeVel.get(n.id);
+        if (v) {
+          v.vx += ux * force;
+          v.vy += uy * force;
+        }
+      }
+    }
+
+    // ── Gravity toward viewport centre (compactness, anti-outlier) ──
     const cont = _cy.container();
     if (cont) {
       const rect = cont.getBoundingClientRect();
@@ -1609,7 +1687,7 @@ export const CloudMap = (() => {
       }
     }
 
-    // Cap displacement by current temperature
+    // ── Cap displacement by current temperature ──
     const t = _phys.temp;
     for (let i = 0; i < N; i++) {
       const v = _phys.nodeVel.get(ps[i].id);
