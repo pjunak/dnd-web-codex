@@ -1009,9 +1009,6 @@ export const CloudMap = (() => {
 
     _cloudLayer.style.zoom = zoom;
     _cloudLayer.style.transform = `translate(${pan.x / zoom}px,${pan.y / zoom}px)`;
-    // Clear left/top in case an earlier code path set them
-    _cloudLayer.style.left = '';
-    _cloudLayer.style.top  = '';
 
     _cy.nodes().forEach(node => {
       const id = node.id();
