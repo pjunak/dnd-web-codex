@@ -122,7 +122,7 @@ export const CloudMap = (() => {
   function _factionHubCloudHTML(fId, faction, count) {
     let body = `<div class="cm-fact">${count} ${count === 1 ? 'postava' : count < 5 ? 'postavy' : 'postav'}</div>`;
     return `<div class="cm-cloud cm-faction-hub" data-id="hub_${fId}" data-type="faction"
-              style="--cc:${faction.color}; width:${CW_HUB}px">
+              style="--cc:${faction.color}; --cw:${CW_HUB}px">
       <div class="cm-strip">${_esc(faction.badge)} FRAKCE</div>
       <div class="cm-name">${_esc(faction.name)}</div>
       <div class="cm-divider"></div>
@@ -142,7 +142,7 @@ export const CloudMap = (() => {
     if (status) body += `<div class="cm-fact cm-dim">${_esc(status)}</div>`;
 
     return `<div class="cm-cloud cm-location" data-id="${loc.id}" data-type="location"
-              style="--cc:#5D7A3A; width:${CW}px">
+              style="--cc:#5D7A3A; --cw:${CW}px">
       <div class="cm-strip">📍 Místo</div>
       <div class="cm-name">${_esc(loc.name)}</div>
       <div class="cm-divider"></div>
@@ -239,7 +239,7 @@ export const CloudMap = (() => {
 
     const modClass  = isDead ? ' cm-dead' : '';
     return `<div class="cm-cloud${modClass}" data-id="${c.id}" data-type="character"
-              style="--cc:${fColor}; width:${CW}px">
+              style="--cc:${fColor}; --cw:${CW}px">
       <div class="cm-strip">${badge} ${_esc(faction)}</div>
       <div class="cm-name">${deadMark}${_esc(name)}</div>
       <div class="cm-divider"></div>
@@ -259,11 +259,11 @@ export const CloudMap = (() => {
       qHTML = `<div class="cm-fact cm-hint">${_esc(snippet)}</div>`;
     }
     return `<div class="cm-cloud cm-mystery" data-id="${m.id}" data-type="mystery"
-              style="--cc:#6A1B9A; width:${CW}px">
+              style="--cc:#6A1B9A; --cw:${CW}px">
       <div class="cm-strip">❓ Záhada</div>
       <div class="cm-name">${_esc(m.name)}</div>
       <div class="cm-divider"></div>
-      <div class="cm-fact" style="color:${priColor};font-size:10px">⚑ ${_esc(m.priority || 'střední')}</div>
+      <div class="cm-fact cm-fact-priority" style="color:${priColor}">⚑ ${_esc(m.priority || 'střední')}</div>
       ${qHTML}
     </div>`;
   }
@@ -273,7 +273,7 @@ export const CloudMap = (() => {
     const lines = _wrap(desc, FONT_FACT, IW).slice(0, 2);
     const snippet = lines.join(' ') + (lines.length < _wrap(desc, FONT_FACT, IW).length ? '…' : '');
     return `<div class="cm-cloud cm-event" data-id="${e.id}" data-type="event"
-              style="--cc:#8B6914; width:${CW}px">
+              style="--cc:#8B6914; --cw:${CW}px">
       <div class="cm-strip">📜 ${e.sitting ? `Sezení ${e.sitting}` : 'Minulost'}</div>
       <div class="cm-name">${_esc(e.name)}</div>
       <div class="cm-divider"></div>
@@ -711,6 +711,13 @@ export const CloudMap = (() => {
     history:    [],             // [Map<id, {x,y}>] undo stack, max 5 entries
   };
 
+  // Last zoom level we wrote to the --cm-z CSS variable. _sync() only
+  // updates the variable when zoom actually changes (not on every pan-
+  // only or physics-tick frame), to keep the style invalidation cost
+  // proportional to user-visible zoom changes. NaN forces the first
+  // _sync() call to write.
+  let _lastSyncedZoom = NaN;
+
   // Tunable physics constants. All in node-position units (~px at zoom 1)
   // per frame. Damping values are multiplicative per frame.
   const PHYS_K = {
@@ -757,6 +764,7 @@ export const CloudMap = (() => {
     _phys.mode = 'elastic';
     _phys.history = [];
     _phys.temp = 0;
+    _lastSyncedZoom = NaN;   // force the next _sync() to write --cm-z
   }
 
   function _destroy() {
@@ -984,31 +992,58 @@ export const CloudMap = (() => {
   }
 
   // ── Viewport sync ────────────────────────────────────────────
-  // Single layer with TWO CSS properties:
-  //   `zoom: <currentZoom>` — re-flows layout + re-rasterises text,
-  //                           giving crisp text at any scale.
-  //   `transform: translate(panX/zoom, panY/zoom)` — pan in CSS px
-  //                           of the zoomed coord system.
+  // Crisp text at any zoom: instead of CSS `zoom` or `transform: scale`
+  // on the layer (both of which can cause Chromium to texture-cache
+  // the subtree and bilinear-resample, producing the "smeared text"
+  // we kept fighting), we drive every visually-sized property in
+  // `.cm-cloud` and descendants through `calc(<base>px * var(--cm-z))`
+  // and update `--cm-z` on `_cloudLayer` whenever zoom changes. CSS
+  // variables go through the cascade and trigger a real style
+  // recomputation, so the browser MUST re-render text at the exact
+  // pixel size for the current zoom. No texture cache.
   //
-  // ⚠️ CRITICAL gotcha: when an element has `zoom: Z`, transform-
-  // translate values are interpreted in the zoomed coord system, so
-  // `translate(N px)` moves the element by `N · Z` actual screen px.
-  // Cytoscape's `_cy.pan()` returns pan in actual screen px, so we
-  // write `translate(pan / zoom px)` so the on-screen translation is
-  // `(pan / zoom) · zoom = pan`. Forgetting this divide-by-zoom is
-  // what made the layer pan at zoom·rate, shifted wheel-zoom-around-
-  // cursor toward the layer's top-left, and shifted node hit-testing
-  // the same way.
+  // The `--cm-z` write is gated on actual zoom delta — pan-only and
+  // physics-tick frames must NOT trigger a layout recalc on the
+  // entire card subtree. We track the last-written value in
+  // `_lastSyncedZoom`.
   //
-  // Cards positioned in graph coordinates at native size — the layer's
-  // `zoom` does the visual scaling.
+  // Cards are positioned in **screen coordinates** here:
+  //   wrapper.left = pos.x · zoom + pan.x − (w · zoom) / 2
+  // The card's CSS-driven visual width is `calc(--cw * --cm-z)`
+  // (matches `w · zoom`), so this centres the card on the node's
+  // rendered position.
+  //
+  // SVG edges keep their own `transform: translate(pan) scale(zoom)`
+  // applied directly to `_edgeSvg`. Vector graphics re-rasterise
+  // crisply at any scale — that's not a texture-cache path. The
+  // SVG must have `transform-origin: 0 0` (default is 50% 50%).
+  //
+  // See CLAUDE.md "CloudMap text scaling via CSS variable" for the
+  // full rationale, including a list of what we tried and reverted.
   function _sync() {
     if (!_cy || !_cloudLayer) return;
     const pan  = _cy.pan();
     const zoom = _cy.zoom();
 
-    _cloudLayer.style.zoom = zoom;
-    _cloudLayer.style.transform = `translate(${pan.x / zoom}px,${pan.y / zoom}px)`;
+    // Update the CSS variable only when zoom actually changes.
+    // Tolerance avoids floating-point chatter from re-firing relayout.
+    if (Math.abs(zoom - _lastSyncedZoom) > 0.0005) {
+      _cloudLayer.style.setProperty('--cm-z', zoom);
+      _lastSyncedZoom = zoom;
+    }
+
+    // Layer itself is no longer zoomed/transformed — clear any leftover
+    // values from older code paths (defensive; cssText sets neither).
+    _cloudLayer.style.zoom = '';
+    _cloudLayer.style.transform = '';
+
+    // SVG edges scale via their own transform on the SVG element. SVG
+    // is vector and re-rasterises crisply at any scale. transform-origin
+    // must be 0 0 — SVG's default is 50% 50% which would offset edges.
+    if (_edgeSvg) {
+      _edgeSvg.style.transformOrigin = '0 0';
+      _edgeSvg.style.transform = `translate(${pan.x}px,${pan.y}px) scale(${zoom})`;
+    }
 
     _cy.nodes().forEach(node => {
       const id = node.id();
@@ -1017,15 +1052,19 @@ export const CloudMap = (() => {
       const pos = node.position();
       const w   = node.data('w');
       const h   = node.data('h');
-      wrapper.style.left = (pos.x - w / 2) + 'px';
-      wrapper.style.top  = (pos.y - h / 2) + 'px';
+      // Visual size on screen is (w · zoom) × (h · zoom). The CSS
+      // calc handles scaling; we just centre the wrapper.
+      wrapper.style.left = (pos.x * zoom + pan.x - (w * zoom) / 2) + 'px';
+      wrapper.style.top  = (pos.y * zoom + pan.y - (h * zoom) / 2) + 'px';
 
-      // Sync faction glow position
+      // Glow halo: native size scaled by zoom (CSS handles width/height
+      // via calc; we only place the box).
       const glow = _glowMap[id];
       if (glow) {
-        const gs = glow.classList.contains('cm-glow-sm') ? 320 : 550;
-        glow.style.left = (pos.x - gs / 2) + 'px';
-        glow.style.top  = (pos.y - gs / 2) + 'px';
+        const gs    = glow.classList.contains('cm-glow-sm') ? 320 : 550;
+        const visGS = gs * zoom;
+        glow.style.left = (pos.x * zoom + pan.x - visGS / 2) + 'px';
+        glow.style.top  = (pos.y * zoom + pan.y - visGS / 2) + 'px';
       }
     });
 
@@ -1215,6 +1254,12 @@ export const CloudMap = (() => {
     // settles to a fan even at rest.
     const PARALLEL_FAN  = 36;
     const parallelInfo  = _buildParallelGroups();
+    // Edge label divs live in the un-zoomed _cloudLayer (cards now
+    // position themselves in screen coords; see _sync). We project
+    // each label's graph-coord midpoint to screen coords and scale
+    // its width by zoom; font-size scales via the --cm-z CSS var.
+    const _pan  = _cy ? _cy.pan()  : { x: 0, y: 0 };
+    const _zoom = _cy ? _cy.zoom() : 1;
 
     Object.entries(_edgeLabels).forEach(([eid, rec]) => {
       const { div, label, svgEls, markerId } = rec;
@@ -1331,7 +1376,9 @@ export const CloudMap = (() => {
       if (label && visLen > 50) {
         // ── Labelled curve ──
         const labelW = Math.max(36, visLen - 20);
-        div.style.width = labelW + 'px';
+        // Width is in screen-px (label div is in the un-zoomed cloud
+        // layer); labelW is in graph-px so multiply by zoom.
+        div.style.width = (labelW * _zoom) + 'px';
 
         const lines = _wrap(label, EDGE_LABEL_FONT, labelW);
         let maxLineW = 0;
@@ -1369,8 +1416,10 @@ export const CloudMap = (() => {
         let angle = Math.atan2(dy, dx) * 180 / Math.PI;
         if (angle > 90 || angle < -90) angle += angle > 0 ? -180 : 180;
         div.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
-        div.style.left = labelX + 'px';
-        div.style.top  = labelY + 'px';
+        // Project graph-coord label midpoint to screen coords (the
+        // div lives in the un-zoomed _cloudLayer).
+        div.style.left = (labelX * _zoom + _pan.x) + 'px';
+        div.style.top  = (labelY * _zoom + _pan.y) + 'px';
         div.style.visibility = 'visible';
       } else {
         // ── Unlabelled or too-short for label gap: single Bézier ──
@@ -2186,8 +2235,23 @@ export const CloudMap = (() => {
   // Pre-layout estimates can be slightly off due to font rendering.
   // After the first DOM paint we measure each cloud's real offsetHeight
   // and patch both the Cytoscape node style (edge routing) and node data
-  // (used by _rectIntersect for label positioning).
+  // (used by _nodeIntersect for label positioning + FR repulsion).
+  //
+  // CRITICAL: cards now scale visually via the --cm-z CSS variable
+  // (see _sync). offsetHeight reflects the VISUALLY-SCALED height —
+  // but data('h') is graph-coord and feeds geometry-sensitive code
+  // (edge endpoints, parallel-fan, FR repulsion, hit-testing). So we
+  // temporarily force --cm-z = 1 before measuring, flush layout, take
+  // the heights at native scale, then restore the previous value.
+  // _lastSyncedZoom is reset so the next _sync() will write back the
+  // actual zoom and not skip due to the stale-cached value.
   function _resizeToActual() {
+    if (!_cy || !_cloudLayer) return;
+    const prev = _cloudLayer.style.getPropertyValue('--cm-z');
+    _cloudLayer.style.setProperty('--cm-z', '1');
+    // Force a layout flush so offsetHeight reflects the temporary scale.
+    void _cloudLayer.offsetHeight;
+
     _cy.batch(() => {
       _cy.nodes().forEach(node => {
         const wrapper = _cloudMap[node.id()];
@@ -2201,6 +2265,12 @@ export const CloudMap = (() => {
         }
       });
     });
+
+    // Restore the previous --cm-z (or remove it if none was set).
+    if (prev) _cloudLayer.style.setProperty('--cm-z', prev);
+    else      _cloudLayer.style.removeProperty('--cm-z');
+    // Force the next _sync() to re-write --cm-z (don't trust cache).
+    _lastSyncedZoom = NaN;
   }
 
   // ── Shared event binding ─────────────────────────────────────

@@ -119,18 +119,28 @@
 /*    HTML clouds that overlay invisible Cytoscape proxy nodes.   */
 /*    pointer-events:none on the layer; all gestures go to cy.    */
 
+/* All sized properties below use calc(<base>px * var(--cm-z, 1)) so
+   that zooming the mind map re-renders text at the EXACT pixel size
+   for the current zoom level rather than scaling a cached texture.
+   --cm-z is set on _cloudLayer per zoom-change frame in cloudmap.js
+   _sync(). Default value 1 keeps cards at native size if --cm-z is
+   unset (during initial paint). See CLAUDE.md "CloudMap text scaling
+   via CSS variable" for the rationale. */
+
 .cm-cloud {
   /* --cc: faction/type colour set per card via inline style */
+  /* --cw: per-card width set via inline style (CW or CW_HUB) */
   position: relative;
+  width: calc(var(--cw, 168px) * var(--cm-z, 1));
   background: linear-gradient(160deg, rgba(22,16,8,0.96) 0%, rgba(14,10,5,0.98) 100%);
-  border: 1px solid color-mix(in srgb, var(--cc) 55%, transparent);
-  border-top: 2px solid var(--cc);
-  border-radius: 6px;
-  padding: 0 10px 8px;
+  border: calc(1px * var(--cm-z, 1)) solid color-mix(in srgb, var(--cc) 55%, transparent);
+  border-top: calc(2px * var(--cm-z, 1)) solid var(--cc);
+  border-radius: calc(6px * var(--cm-z, 1));
+  padding: 0 calc(10px * var(--cm-z, 1)) calc(8px * var(--cm-z, 1));
   box-shadow:
-    0 0 0 1px rgba(0,0,0,0.6),
-    0 4px 14px rgba(0,0,0,0.55),
-    inset 0 1px 0 rgba(255,255,255,0.04);
+    0 0 0 calc(1px * var(--cm-z, 1)) rgba(0,0,0,0.6),
+    0 calc(4px * var(--cm-z, 1)) calc(14px * var(--cm-z, 1)) rgba(0,0,0,0.55),
+    inset 0 calc(1px * var(--cm-z, 1)) 0 rgba(255,255,255,0.04);
   font-family: var(--font-ui, 'Inter', sans-serif);
   user-select: none;
   transition: opacity 0.2s, box-shadow 0.2s;
@@ -142,19 +152,19 @@
   content: '';
   position: absolute;
   inset: 0;
-  border-radius: 6px;
-  box-shadow: inset 2px 0 8px -4px var(--cc);
+  border-radius: calc(6px * var(--cm-z, 1));
+  box-shadow: inset calc(2px * var(--cm-z, 1)) 0 calc(8px * var(--cm-z, 1)) calc(-4px * var(--cm-z, 1)) var(--cc);
   pointer-events: none;
 }
 
 /* Faction strip */
 .cm-strip {
-  font-size: 9px;
+  font-size: calc(9px * var(--cm-z, 1));
   font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: color-mix(in srgb, var(--cc) 80%, #E0D0A0);
-  padding: 5px 0 3px;
+  padding: calc(5px * var(--cm-z, 1)) 0 calc(3px * var(--cm-z, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -164,49 +174,54 @@
 /* Primary name */
 .cm-name {
   font-family: var(--font-title, 'Cinzel', serif);
-  font-size: 13px;
+  font-size: calc(13px * var(--cm-z, 1));
   font-weight: 600;
   color: var(--text-parchment, #F5EDD8);
   line-height: 1.25;
-  margin-bottom: 4px;
-  text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+  margin-bottom: calc(4px * var(--cm-z, 1));
+  text-shadow: 0 calc(1px * var(--cm-z, 1)) calc(4px * var(--cm-z, 1)) rgba(0,0,0,0.7);
 }
 
-/* Thin separator */
+/* Thin separator. Use max(1px, …) so the line doesn't disappear at
+   deep zoom-out where calc would yield sub-pixel heights. */
 .cm-divider {
-  height: 1px;
+  height: max(1px, calc(1px * var(--cm-z, 1)));
   background: linear-gradient(90deg, var(--cc), transparent);
   opacity: 0.35;
-  margin: 0 0 5px;
+  margin: 0 0 calc(5px * var(--cm-z, 1));
 }
 
 /* Fact rows */
 .cm-fact {
   font-family: 'Lora', Georgia, serif;
-  font-size: 11px;
+  font-size: calc(11px * var(--cm-z, 1));
   line-height: 1.4;
   color: var(--text-light, #C8B89A);
-  margin-bottom: 2px;
+  margin-bottom: calc(2px * var(--cm-z, 1));
 }
 .cm-fact.cm-dim {
   color: var(--text-muted, #806C52);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--cm-z, 1));
 }
 .cm-fact.cm-hint {
   font-style: italic;
   color: color-mix(in srgb, var(--cc) 65%, #C8B89A);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--cm-z, 1));
+}
+/* Mystery-card priority row (was inline font-size:10px in JS template) */
+.cm-fact.cm-fact-priority {
+  font-size: calc(10px * var(--cm-z, 1));
 }
 
 /* Status row (Vztahy mode) */
 .cm-status-row {
   font-family: var(--font-ui, 'Inter', sans-serif);
-  font-size: 11px;
+  font-size: calc(11px * var(--cm-z, 1));
   color: var(--text-light, #C8B89A);
-  margin-bottom: 3px;
+  margin-bottom: calc(3px * var(--cm-z, 1));
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: calc(4px * var(--cm-z, 1));
 }
 
 /* Dead character variant */
@@ -228,22 +243,22 @@
 
 /* Faction hub node variant — pill / stadium shape */
 .cm-cloud.cm-faction-hub {
-  border-radius: 999px;
-  padding: 0 20px 10px;
+  border-radius: 999px;   /* fully-rounded; doesn't need scaling */
+  padding: 0 calc(20px * var(--cm-z, 1)) calc(10px * var(--cm-z, 1));
   text-align: center;
-  border-top-width: 3px;
+  border-top-width: calc(3px * var(--cm-z, 1));
   background: linear-gradient(160deg, rgba(30,22,10,0.97) 0%, rgba(18,12,6,0.99) 100%);
   box-shadow:
-    0 0 0 1px rgba(0,0,0,0.6),
-    0 4px 18px rgba(0,0,0,0.6),
-    0 0 16px -4px var(--cc),
-    inset 0 1px 0 rgba(255,255,255,0.06);
+    0 0 0 calc(1px * var(--cm-z, 1)) rgba(0,0,0,0.6),
+    0 calc(4px * var(--cm-z, 1)) calc(18px * var(--cm-z, 1)) rgba(0,0,0,0.6),
+    0 0 calc(16px * var(--cm-z, 1)) calc(-4px * var(--cm-z, 1)) var(--cc),
+    inset 0 calc(1px * var(--cm-z, 1)) 0 rgba(255,255,255,0.06);
 }
 .cm-cloud.cm-faction-hub::before {
   border-radius: 999px;
 }
 .cm-cloud.cm-faction-hub .cm-name {
-  font-size: 15px;
+  font-size: calc(15px * var(--cm-z, 1));
 }
 .cm-cloud.cm-faction-hub .cm-strip {
   text-align: center;
@@ -261,18 +276,18 @@
 .cm-loc-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px;
-  margin-top: 3px;
+  gap: calc(3px * var(--cm-z, 1));
+  margin-top: calc(3px * var(--cm-z, 1));
 }
 .cm-loc-chip {
   --cc: #888;
   font-family: var(--font-ui, 'Inter', sans-serif);
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--cm-z, 1));
   line-height: 1.2;
-  padding: 1px 5px;
-  border-radius: 8px;
+  padding: calc(1px * var(--cm-z, 1)) calc(5px * var(--cm-z, 1));
+  border-radius: calc(8px * var(--cm-z, 1));
   background: color-mix(in srgb, var(--cc) 22%, rgba(20,18,16,0.6));
-  border: 1px solid color-mix(in srgb, var(--cc) 50%, transparent);
+  border: calc(1px * var(--cm-z, 1)) solid color-mix(in srgb, var(--cc) 50%, transparent);
   color: #f0e6d2;
   white-space: nowrap;
   max-width: 100%;
@@ -288,16 +303,16 @@
 /* Faction territory glow — large soft radial behind hubs, smaller behind members */
 .cm-glow {
   position: absolute;
-  width: 550px;
-  height: 550px;
+  width: calc(550px * var(--cm-z, 1));
+  height: calc(550px * var(--cm-z, 1));
   border-radius: 50%;
   background: radial-gradient(circle, var(--gc) 0%, transparent 70%);
   opacity: 0.16;
   pointer-events: none;
 }
 .cm-glow.cm-glow-sm {
-  width: 320px;
-  height: 320px;
+  width: calc(320px * var(--cm-z, 1));
+  height: calc(320px * var(--cm-z, 1));
   opacity: 0.11;
 }
 
@@ -308,10 +323,10 @@
 .cm-cloud.cm-highlighted {
   opacity: 1;
   box-shadow:
-    0 0 0 1px rgba(0,0,0,0.6),
-    0 6px 20px rgba(0,0,0,0.7),
-    0 0 12px -3px var(--cc),
-    inset 0 1px 0 rgba(255,255,255,0.06);
+    0 0 0 calc(1px * var(--cm-z, 1)) rgba(0,0,0,0.6),
+    0 calc(6px * var(--cm-z, 1)) calc(20px * var(--cm-z, 1)) rgba(0,0,0,0.7),
+    0 0 calc(12px * var(--cm-z, 1)) calc(-3px * var(--cm-z, 1)) var(--cc),
+    inset 0 calc(1px * var(--cm-z, 1)) 0 rgba(255,255,255,0.06);
 }
 
 /* (Squish keyframes removed — collisions are now impulse-based and
@@ -324,14 +339,14 @@
 .cm-edge-label {
   position: absolute;
   font-family: 'Inter', sans-serif;
-  font-size: 12px;
-  line-height: 1.35;
+  font-size: calc(12px * var(--cm-z, 1));
+  line-height: 1.35;         /* unitless, scales with font-size */
   white-space: normal;       /* wrap within the dynamically-set width */
   text-align: center;
   word-break: break-word;
   pointer-events: none;
   transform-origin: center center;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.02em;    /* em-relative, scales with font-size */
 }
 
 /* ── Faction filter checkboxes in legend ──────────────────── */
