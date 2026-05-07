@@ -68,7 +68,12 @@ export const Wiki = (() => {
   // halo for free. Empty array = no filter at all = "unknown" baseline.
   // Faction inheritance (character with empty own-attitudes uses the
   // faction's attitudes) lives in Store.getEffectiveAttitudes.
-  const GLOW_BLUR_PX = 7;
+  // Outer halo blur for attitude glow on cards / portraits / faction
+  // badges. The renderer also stacks a tighter inner-blur layer per
+  // attitude (≈40% of the outer radius) so 100% strength reads as a
+  // confident glow rather than a washed-out haze; both layers scale
+  // by the entry's strength so 50% still looks proportionally subtle.
+  const GLOW_BLUR_PX = 10;
   function _attitudeColorMap() {
     const map = {};
     for (const a of Store.getEnum('attitudes') || []) {
@@ -88,19 +93,25 @@ export const Wiki = (() => {
     const b = n & 255;
     return `rgba(${r},${g},${b},${alpha})`;
   }
-  // Returns a CSS filter string ('drop-shadow(...) drop-shadow(...)')
-  // or '' when no entry has positive strength. `blurPx` lets callers
-  // tune the halo size for tiny icons (map pins) vs. large portraits.
+  // Returns a CSS filter string or '' when no entry has positive
+  // strength. Each active attitude contributes TWO stacked drop-
+  // shadows: a wide outer halo + a tighter inner glow ≈40% of the
+  // outer blur. The double layer makes strength=1.0 read as a
+  // confident glow rather than a washed-out haze; alpha = strength
+  // on both layers so 50% still looks proportionally subtle.
   function _attitudeGlow(entries, colors, blurPx = GLOW_BLUR_PX) {
     if (!Array.isArray(entries) || !entries.length) return '';
     const layers = [];
+    const innerBlur = Math.max(2, Math.round(blurPx * 0.4));
     for (const e of entries) {
       if (!e || !e.id) continue;
       const color = colors[e.id];
       if (!color) continue;
       const s = (typeof e.strength === 'number') ? e.strength : 1.0;
       if (s <= 0) continue;
-      layers.push(`drop-shadow(0 0 ${blurPx}px ${_hexToRgba(color, s)})`);
+      const rgba = _hexToRgba(color, s);
+      layers.push(`drop-shadow(0 0 ${blurPx}px ${rgba})`);
+      layers.push(`drop-shadow(0 0 ${innerBlur}px ${rgba})`);
     }
     return layers.join(' ');
   }

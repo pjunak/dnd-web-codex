@@ -184,12 +184,17 @@ export const WorldMap = (() => {
     const enums = Store.getEnum('attitudes') || [];
     const colors = Object.fromEntries(enums.map(a => [a.id, a.labelColor || a.bg || '#888']));
     const layers = [];
+    // Stack a tighter inner-glow per attitude so 100% strength reads
+    // as a confident glow on small markers (mirrors wiki._attitudeGlow).
+    const innerBlur = Math.max(2, Math.round(blurPx * 0.4));
     for (const e of entries) {
       if (!e) continue;
       const id = (typeof e === 'string') ? e : e.id;
       const s  = (typeof e === 'string') ? 1.0 : ((typeof e.strength === 'number') ? e.strength : 1.0);
       if (!id || !colors[id] || s <= 0) continue;
-      layers.push(`drop-shadow(0 0 ${blurPx}px ${_hexToRgba(colors[id], s)})`);
+      const rgba = _hexToRgba(colors[id], s);
+      layers.push(`drop-shadow(0 0 ${blurPx}px ${rgba})`);
+      layers.push(`drop-shadow(0 0 ${innerBlur}px ${rgba})`);
     }
     return layers.join(' ');
   }
@@ -525,7 +530,7 @@ export const WorldMap = (() => {
     ].join(', ');
     // Glow halo — one colored drop-shadow per active attitude, blended
     // additively. Empty array = no filter (no glow).
-    const glow = _attitudeGlowFilter(pin.attitudes || [], Math.max(4, Math.round(size * 0.18)));
+    const glow = _attitudeGlowFilter(pin.attitudes || [], Math.max(5, Math.round(size * 0.22)));
     const filterAttr = glow ? `filter:${glow};` : '';
     // Slightly larger emoji-to-box ratio (was 0.55) since there's no
     // background plate eating the vertical space anymore.
