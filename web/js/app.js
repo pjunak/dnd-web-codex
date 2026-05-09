@@ -363,6 +363,17 @@ document.addEventListener('error',    (ev) => {
     if (hash !== null) _lastHash = hash;
     await Store.load();
     Settings.applySidebarVisibility();
+    // Self-originated SSE echoes (e.g. the Mapy zoom-scale slider's
+    // own PATCH) shouldn't replace the entire Settings DOM —
+    // doing so kills any in-flight slider drag. The Settings module
+    // sets `isPendingSelfCommit()` for ~1.5 s after committing
+    // its own write; during that window we keep the data fresh
+    // (`Store.load()` above) and update `_lastHash` (preventing
+    // a queued duplicate from re-firing) but skip the wholesale
+    // re-render. Genuine remote edits during the window get one
+    // missed re-render at worst — the next remote change re-renders
+    // normally.
+    if (getRoute() === '/nastaveni' && Settings.isPendingSelfCommit?.()) return;
     navigate(getRoute());
   }
 

@@ -1000,27 +1000,51 @@ export const Settings = (() => {
 
   /** Live-update the readout next to the zoom-scale slider as
    *  the user drags. Persistence happens on `change` (after release)
-   *  via `commitMapZoomRatio` so we don't fire one PATCH per pixel. */
+   *  via `commitMapZoomRatio` so we don't fire one PATCH per pixel.
+   *  Walks up from the slider's parent to find the sibling `<output>`
+   *  rather than `getElementById`, so an SSE-driven re-render that
+   *  replaces the slider DOM mid-debounce doesn't leave us writing
+   *  text into a detached element. */
   function updateMapZoomRatioReadout(rangeEl) {
     if (!rangeEl) return;
-    const out = document.getElementById('settings-mapconfig-zoomscale-out');
+    const out = rangeEl.parentElement?.querySelector('output');
     if (!out) return;
     const v = parseFloat(rangeEl.value);
     out.textContent = `${Math.round((isFinite(v) ? v : 0) * 100)}%`;
   }
 
-  // Debounced commit. Each `change` on a range slider in some
-  // browsers / input devices fires more than once per drag, and each
-  // call would otherwise PATCH → server broadcast → SSE → re-render
-  // of the Settings page. The re-render replaces the slider DOM
-  // mid-interaction, which is what made the previous version feel
-  // broken when the user dragged. Coalesce into a single write
-  // 350 ms after the last change so the slider DOM stays stable
-  // during the gesture. Pin the captured target id at the moment
-  // commit fires so a switch to a different map mid-debounce
-  // doesn't write the value to the wrong key.
-  let _zoomCommitTimer = null;
+  // Debounced commit + self-render suppression.
+  //
+  // Each `change` on a range slider in some browsers / input devices
+  // fires more than once per drag, and each call would otherwise
+  // PATCH → server broadcast → SSE → re-render of the Settings page.
+  // The re-render replaces the slider DOM mid-interaction, which
+  // makes the slider feel broken if the user resumes dragging in
+  // the SSE round-trip window.
+  //
+  // Two mitigations:
+  //  • Debounce 600 ms after the last change so a single drag-
+  //    release-drag-release sequence collapses into one write.
+  //  • Mark the commit as "self-originated" so app.js's SSE handler
+  //    can skip the wholesale `navigate()` re-render when our own
+  //    PATCH echoes back. The flag clears after a short window
+  //    regardless, so an actual remote change still re-renders.
+  //
+  // Pin the captured target id at the moment commit fires so a
+  // switch to a different map mid-debounce doesn't write the value
+  // to the wrong key.
+  let _zoomCommitTimer  = null;
   let _zoomCommitTarget = null;
+  let _selfCommitUntil  = 0;
+  /** True when Settings issued a write that hasn't echoed back yet
+   *  (SSE round-trip window). Used by app.js's `_applyRemoteChange`
+   *  to skip a re-render that would replace the slider DOM mid-
+   *  interaction. The window is short (~1.5 s) so genuine remote
+   *  edits during that window only get one missed re-render at
+   *  worst — the next remote change re-renders normally. */
+  function isPendingSelfCommit() {
+    return Date.now() < _selfCommitUntil;
+  }
   function commitMapZoomRatio(value) {
     let n = parseFloat(value);
     if (!isFinite(n)) n = 0;
@@ -1033,12 +1057,13 @@ export const Settings = (() => {
       const target = _zoomCommitTarget;
       _zoomCommitTarget = null;
       if (!target) return;
+      _selfCommitUntil = Date.now() + 1500;
       Store.setMapConfig(target, { zoomScaleRatio: n });
       // If the live map is open and showing this map, push the new
       // ratio so it rescales markers immediately rather than waiting
       // for the next zoom event. No-op when on the Settings page.
       try { WorldMap.applyZoomScaleRatio?.(target); } catch (_) {}
-    }, 350);
+    }, 600);
   }
 
   function uploadWorldMap(input) {
@@ -1355,5 +1380,6 @@ export const Settings = (() => {
     updateStrengthReadout,
     selectMap, uploadSubMap,
     updateMapZoomRatioReadout, commitMapZoomRatio,
+    isPendingSelfCommit,
   };
 })();

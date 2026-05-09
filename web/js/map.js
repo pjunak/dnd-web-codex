@@ -1362,9 +1362,9 @@ export const WorldMap = (() => {
     _placeForLocId = null;
     _placeForEventId = eventId;
     const targetParent = ev.mapParentId || null;
-    const alreadyOnMap = !!_map && targetParent === _currentParentId;
+    const alreadyOnMap = _isOnMapRoute() && !!_map && targetParent === _currentParentId;
     if (alreadyOnMap) { _armForCurrentTarget(); return; }
-    if (window.location.hash !== '#/mapa/svet') window.location.hash = '#/mapa/svet';
+    if (!_isOnMapRoute()) window.location.hash = '#/mapa/svet';
     // Defer until the route change (and any parent-map render) finishes.
     // _doInit will call _armForCurrentTarget once the map is ready, so the
     // intent survives SSE-driven re-renders that may happen concurrently.
@@ -1391,9 +1391,9 @@ export const WorldMap = (() => {
       const capZoom = Math.min(0, _map.getMaxZoom());
       _map.flyTo(ll, capZoom, { animate: true, duration: 0.6 });
     };
-    const alreadyOnMap = !!_map && targetParent === _currentParentId;
+    const alreadyOnMap = _isOnMapRoute() && !!_map && targetParent === _currentParentId;
     if (alreadyOnMap) { fly(); return; }
-    if (window.location.hash !== '#/mapa/svet') window.location.hash = '#/mapa/svet';
+    if (!_isOnMapRoute()) window.location.hash = '#/mapa/svet';
     setTimeout(() => {
       if (targetParent) render(targetParent);
       setTimeout(fly, 120);
@@ -1419,9 +1419,9 @@ export const WorldMap = (() => {
     const targetParent = loc.parentId || null;
     _placeForEventId = null;
     _placeForLocId = locId;
-    const alreadyOnMap = !!_map && targetParent === _currentParentId;
+    const alreadyOnMap = _isOnMapRoute() && !!_map && targetParent === _currentParentId;
     if (alreadyOnMap) { _armForCurrentTarget(); return; }
-    if (window.location.hash !== '#/mapa/svet') window.location.hash = '#/mapa/svet';
+    if (!_isOnMapRoute()) window.location.hash = '#/mapa/svet';
     // Defer until the route change (and any parent-map render) finishes.
     // _doInit will call _armForCurrentTarget once the map is ready, so the
     // intent survives SSE-driven re-renders that may happen concurrently.
@@ -1575,6 +1575,17 @@ export const WorldMap = (() => {
     _openPinPanel(pinId);
   }
 
+  // True when the world-map page is the active route. The module
+  // keeps `_map` and `_currentParentId` populated even after the
+  // user navigates away, so they're not safe stand-alone signals
+  // for "is the map mounted in the DOM right now". Public-entry
+  // helpers (showPin / startPlacingPin / showEventPin / etc.)
+  // gate their fast-paths on this so they don't try to fly /
+  // arm a stale, detached Leaflet instance.
+  function _isOnMapRoute() {
+    return window.location.hash === '#/mapa/svet';
+  }
+
   // Public entry point used from wiki pages. Navigates into the correct
   // map context (world or parent local map), then flies to the pin once
   // Leaflet has finished its async init. If the map is already up, this
@@ -1583,17 +1594,17 @@ export const WorldMap = (() => {
     const loc = Store.getLocation(pinId);
     if (!loc || typeof loc.x !== 'number') return;
     const targetParent = loc.parentId || null;
-    const alreadyOnMap = !!_map && targetParent === _currentParentId;
+    const alreadyOnMap = _isOnMapRoute() && !!_map && targetParent === _currentParentId;
     if (alreadyOnMap) { zoomToPin(pinId); return; }
     _pendingPinId = pinId;
-    if (targetParent) {
-      // Sub-map: render will be called when someone reaches the map page.
-      // Route to world map first (canonical hash), then switch parents.
-      window.location.hash = '#/mapa/svet';
-      setTimeout(() => render(targetParent), 0);
-    } else {
+    if (!_isOnMapRoute()) {
+      // Hash change triggers app.js navigate() → WorldMap.render() →
+      // _wirePostInit, which consumes `_pendingPinId` once the map
+      // is ready. For sub-map pins we additionally call render() in
+      // a microtask to switch context after the world-map mount.
       window.location.hash = '#/mapa/svet';
     }
+    if (targetParent) setTimeout(() => render(targetParent), 0);
   }
 
   // Switch the map view to a parent location's local map (parent.localMap
