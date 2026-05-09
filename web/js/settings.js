@@ -40,14 +40,14 @@ export const Settings = (() => {
     // on the pin, `labelColor` is the readable colour on dark UI (chip
     // text, glow, legend).
     { id: 'attitudes',         label: 'Postoje k partě',       icon: '🤝',
-      fields: ['label', 'bg', 'fg', 'labelColor'] },
+      fields: ['label', 'bg', 'fg', 'labelColor', 'strength'] },
   ];
 
   // Non-enum tabs live alongside the category tabs. They render custom
   // panels (world-map upload, map-view presets, backup tools) instead
   // of the enum editor.
   const SPECIAL_TABS = [
-    { id: 'worldmap',     label: 'Mapa světa',      icon: '🗺' },
+    { id: 'worldmap',     label: 'Mapy',            icon: '🗺' },
     { id: 'mapViews',     label: 'Pohledy na mapě', icon: '📍' },
     { id: 'sidebarPages', label: 'Postranní panel', icon: '🧭' },
     { id: 'backup',       label: 'Záloha',          icon: '💾' },
@@ -60,6 +60,11 @@ export const Settings = (() => {
   // a time — opening another collapses the previous so the layout stays
   // tidy when there are many pin types.
   let _iconPanelOpenFor = null;
+  // Currently-selected map in the "Mapy" tab. 'world' = main map;
+  // for sub-maps the id is `local-${locationId}` so it lines up
+  // with `_currentMapId` in map.js and the keys used in
+  // `settings.mapConfigs`.
+  let _activeMapId = 'world';
 
   // ── Render ───────────────────────────────────────────────────
   function render() {
@@ -145,9 +150,26 @@ export const Settings = (() => {
             title="Vlastní ikony pro tuto značku"
             ${dataAction('Settings.toggleIconPanel', item.id)}>🎨</button>`
       : '';
+    // For pinTypes rows, prefer a real artwork preview (first user-
+    // uploaded file → bundled default → emoji fallback) so the row
+    // shows the same artwork the map renders. All other categories
+    // keep the emoji/character glyph the GM typed in.
+    const rowIconHtml = (() => {
+      if (cat.id === 'pinTypes') {
+        const cfg = item.iconConfig;
+        let url = null;
+        if (cfg && Array.isArray(cfg.files) && cfg.files.length) {
+          const f = cfg.files.find(x => x.stateId == null) || cfg.files[0];
+          if (f && f.url) url = f.url;
+        }
+        if (!url) url = WorldMap.bundledDefaultUrl(item.id);
+        if (url) return `<img class="settings-row-icon-img" src="${esc(url)}" alt="" ${dataOn('error', 'hide', '$el')}>`;
+      }
+      return `<span class="settings-row-icon">${esc(item.icon || item.label?.[0] || '·')}</span>`;
+    })();
     const row = `
       <div class="settings-row">
-        <span class="settings-row-icon">${esc(item.icon || item.label?.[0] || '·')}</span>
+        ${rowIconHtml}
         <span class="settings-row-label">${esc(item.label || item.id)}</span>
         ${swatch}
         <code class="settings-row-id">${esc(item.id)}</code>
@@ -376,12 +398,30 @@ export const Settings = (() => {
           placeholder="(prázdné)">
       </label>`;
     };
+    // Glow intensity for this attitude — moved off the entity onto
+    // the enum item so editing here updates every glow at once.
+    // Range 0..1, percent readout next to the slider.
+    const strengthField = () => {
+      const cur = (typeof item.strength === 'number') ? item.strength : 1.0;
+      const pct = Math.round(cur * 100);
+      return `
+      <label class="settings-field">
+        <span class="settings-field-label">Intenzita záře <span class="settings-hint" style="font-weight:normal">(0 % = žádná, 100 % = plná)</span></span>
+        <div class="settings-strength-row">
+          <input type="range" id="sf-${uid}-strength"
+            min="0" max="1" step="0.05" value="${cur}"
+            ${dataOn('input', 'Settings.updateStrengthReadout', '$el')}>
+          <output id="sf-${uid}-strength-out">${pct}%</output>
+        </div>
+      </label>`;
+    };
 
     const inputs = (cat.fields || []).map(name => {
       if (name === 'color' || name === 'bg' || name === 'fg' || name === 'labelColor') return colorField(name);
       if (name === 'style')                                                            return styleField();
       if (name === 'size')                                                             return sizeField();
       if (name === 'severity')                                                         return severityField();
+      if (name === 'strength')                                                         return strengthField();
       return field(name, name === 'icon' ? 'Emoji nebo znak' : 'Text');
     }).join('');
 
@@ -412,6 +452,7 @@ export const Settings = (() => {
     return {
       label: 'Název', icon: 'Ikona', color: 'Barva',
       style: 'Styl', size: 'Velikost', severity: 'Severita',
+      strength: 'Intenzita záře',
       bg: 'Pozadí', fg: 'Popředí', labelColor: 'Barva textu',
     }[name] || name;
   }
@@ -446,6 +487,17 @@ export const Settings = (() => {
     render();
   }
 
+  /** Live percent readout next to the attitude strength slider in
+   *  the Postoje k partě editor. Wired via `dataOn('input', ...)`
+   *  on the slider so the `<output>` updates as the user drags. */
+  function updateStrengthReadout(rangeEl) {
+    if (!rangeEl) return;
+    const out = rangeEl.parentElement?.querySelector('output');
+    if (!out) return;
+    const v = parseFloat(rangeEl.value);
+    out.textContent = `${Math.round((isFinite(v) ? v : 0) * 100)}%`;
+  }
+
   function commit(uid, isNew) {
     const cat = CATEGORIES.find(c => c.id === _activeCat);
     const getVal = (name) => {
@@ -468,6 +520,13 @@ export const Settings = (() => {
         // Empty severity is meaningful: it means "off the decay axis"
         // (resolver skips this status for closest-match fallback).
         item[f] = (v === '' || v == null) ? null : Number(v);
+      } else if (f === 'strength') {
+        // Range slider always has a value; default to 1.0 if missing.
+        let n = (v === '' || v == null) ? 1.0 : Number(v);
+        if (!isFinite(n)) n = 1.0;
+        if (n < 0) n = 0;
+        if (n > 1) n = 1;
+        item[f] = n;
       } else if (v !== '' && v != null) {
         item[f] = (f === 'size') ? Number(v) : v;
       }
@@ -701,32 +760,134 @@ export const Settings = (() => {
     });
   }
 
-  // ── World-map panel ──────────────────────────────────────────
+  // ── Maps panel ───────────────────────────────────────────────
+  // The "Mapy" tab covers both image upload AND per-map config
+  // (zoom-scale ratio for now; future per-map knobs would go here).
+  // Top selector picks which map you're editing — 🌐 world or 🗺
+  // any location with a `localMap`. The selected map's panel shows
+  // the current image, an upload button (POSTs to /api/worldmap or
+  // /api/localmap/<locId>), and the config sliders.
+  function _mapsList() {
+    const out = [{
+      id:    'world',
+      label: 'Mapa světa',
+      icon:  '🌐',
+      isWorld: true,
+      imgUrl: '/maps/swordcoast/sword_coast.jpg',
+    }];
+    const locs = (Store.getLocations() || []).filter(l => l && l.localMap);
+    locs.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'cs'));
+    for (const l of locs) {
+      out.push({
+        id:        `local-${l.id}`,
+        locationId: l.id,
+        label:     l.name || l.id,
+        icon:      '🗺',
+        isWorld:   false,
+        imgUrl:    l.localMap,
+      });
+    }
+    return out;
+  }
+
   function _worldmapHtml() {
-    const current = '/maps/swordcoast/sword_coast.jpg';
+    const maps = _mapsList();
+    if (!maps.find(m => m.id === _activeMapId)) _activeMapId = 'world';
+    const current = maps.find(m => m.id === _activeMapId);
+
+    const selector = maps.map(m => `
+      <button type="button" class="settings-map-tab ${m.id===_activeMapId?'is-active':''}"
+        ${dataAction('Settings.selectMap', m.id)}>
+        <span class="settings-map-tab-icon">${m.icon}</span>
+        <span class="settings-map-tab-label">${esc(m.label)}</span>
+      </button>`).join('');
+
+    const cfg   = Store.getMapConfig(_activeMapId);
+    const ratio = (typeof cfg.zoomScaleRatio === 'number') ? cfg.zoomScaleRatio : 0;
+    const ratioPct = Math.round(ratio * 100);
+
+    const uploadAction = current.isWorld ? 'Settings.uploadWorldMap' : 'Settings.uploadSubMap';
+    const uploadHint = current.isWorld
+      ? `Uloží se jako <code>/maps/swordcoast/sword_coast.&lt;ext&gt;</code> a server přegeneruje dlaždice na pozadí.`
+      : `Uloží se jako <code>/maps/local/${esc(current.locationId)}/map.&lt;ext&gt;</code> a server přegeneruje dlaždice na pozadí.`;
+    const uploadDataset = current.isWorld
+      ? ''
+      : ` data-loc-id="${esc(current.locationId)}"`;
+
+    const previewSrc = current.imgUrl
+      ? `${current.imgUrl}?v=${Date.now()}`
+      : '';
+    const previewHtml = previewSrc
+      ? `<div class="settings-worldmap-preview">
+           <img src="${esc(previewSrc)}" alt="" ${dataOn('error', 'hide', '$el')}>
+         </div>`
+      : `<div class="settings-empty" style="margin:0.5rem 0">
+           Tato mapa zatím nemá obrázek. Nahraj ho níže.
+         </div>`;
+
     return `
       <div class="settings-editor-head">
-        <h2>🗺 Mapa světa</h2>
+        <h2>🗺 Mapy</h2>
       </div>
       <div class="settings-panel">
-        <p class="settings-hint" style="margin-bottom:1rem">
-          Nahraj nový obrázek hlavní mapy. Uloží se jako
-          <code>${esc(current)}</code> a server automaticky přegeneruje
-          dlaždice (tile pyramid) pro plynulé zoomování.
-        </p>
-        <div class="settings-worldmap-preview">
-          <img src="${esc(current)}?v=${Date.now()}" alt=""
-               ${dataOn('error', 'hide', '$el')}>
-        </div>
+        <div class="settings-map-selector" role="tablist">${selector}</div>
+        <p class="settings-hint" style="margin-bottom:0.8rem">${uploadHint}</p>
+        ${previewHtml}
         <label class="inline-create-btn" style="cursor:pointer;display:inline-block;margin-top:0.8rem">
           📂 Vybrat soubor…
-          <input type="file" accept="image/*" style="display:none"
-                 ${dataOn('change', 'Settings.uploadWorldMap', '$el')}>
+          <input type="file" accept="image/*" style="display:none"${uploadDataset}
+                 ${dataOn('change', uploadAction, '$el')}>
         </label>
         <span class="settings-hint" style="margin-left:0.8rem">
           Max 40 MB. Doporučený formát JPG/PNG/WebP, min. šířka 2000 px.
         </span>
+
+        <hr style="border:none;border-top:1px dashed rgba(212,184,122,0.18);margin:1.2rem 0">
+
+        <div class="settings-mapviews-group-title">Nastavení této mapy</div>
+        <label class="settings-field" style="margin-top:0.6rem">
+          <span class="settings-field-label">Zoom-scale značek
+            <span class="settings-hint" style="font-weight:normal">
+              (0 = ikony mají vždy stejnou velikost; 1 = rostou stejně rychle jako mapa)
+            </span>
+          </span>
+          <div class="settings-strength-row">
+            <input type="range" id="settings-mapconfig-zoomscale"
+              min="0" max="1" step="0.05" value="${ratio}"
+              ${dataOn('input', 'Settings.updateMapZoomRatioReadout', '$el')}
+              ${dataOn('change', 'Settings.commitMapZoomRatio', '$value')}>
+            <output id="settings-mapconfig-zoomscale-out">${ratioPct}%</output>
+          </div>
+        </label>
       </div>`;
+  }
+
+  function selectMap(mapId) {
+    _activeMapId = mapId || 'world';
+    render();
+  }
+
+  /** Live-update the readout next to the zoom-scale slider as
+   *  the user drags. Persistence happens on `change` (after release)
+   *  via `commitMapZoomRatio` so we don't fire one PATCH per pixel. */
+  function updateMapZoomRatioReadout(rangeEl) {
+    if (!rangeEl) return;
+    const out = document.getElementById('settings-mapconfig-zoomscale-out');
+    if (!out) return;
+    const v = parseFloat(rangeEl.value);
+    out.textContent = `${Math.round((isFinite(v) ? v : 0) * 100)}%`;
+  }
+
+  function commitMapZoomRatio(value) {
+    let n = parseFloat(value);
+    if (!isFinite(n)) n = 0;
+    if (n < 0) n = 0;
+    if (n > 1) n = 1;
+    Store.setMapConfig(_activeMapId, { zoomScaleRatio: n });
+    // If the live map is open and showing this map, push the new
+    // ratio so it rescales markers immediately rather than waiting
+    // for the next zoom event.
+    try { WorldMap.applyZoomScaleRatio?.(_activeMapId); } catch (_) {}
   }
 
   function uploadWorldMap(input) {
@@ -746,6 +907,25 @@ export const Settings = (() => {
         render();
       })
       .catch(e => _flash(e?.error || 'Nahrávání selhalo', false))
+      .finally(() => { if (input) input.value = ''; });
+  }
+
+  function uploadSubMap(input) {
+    const file = input?.files?.[0];
+    if (!file) return;
+    const locId = input?.dataset?.locId;
+    if (!locId) { _flash('Chybí ID místa', false); return; }
+    _flash('Nahrávám…');
+    Store.uploadLocalMap(file, locId)
+      .then(url => {
+        // Refresh the location's record in memory so the preview
+        // picks up the new URL on next render.
+        const loc = Store.getLocation(locId);
+        if (loc) Store.saveLocation({ ...loc, localMap: url });
+        _flash('Mapa nahrána — přegenerovávám dlaždice na pozadí…');
+        render();
+      })
+      .catch(e => _flash(e?.message || 'Nahrávání selhalo', false))
       .finally(() => { if (input) input.value = ''; });
   }
 
@@ -1019,5 +1199,8 @@ export const Settings = (() => {
     deleteSnapshot, revertLastN, uploadRestore,
     toggleIconPanel, setIconStrategy, setIconState,
     uploadIconFiles, deleteIconFile,
+    updateStrengthReadout,
+    selectMap, uploadSubMap,
+    updateMapZoomRatioReadout, commitMapZoomRatio,
   };
 })();

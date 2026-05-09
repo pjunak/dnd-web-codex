@@ -103,6 +103,18 @@
   border-radius: 6px;
 }
 .settings-row-icon  { font-size: 1.05rem; text-align: center; }
+/* SVG artwork preview shown in pinTypes rows when a real icon is
+   available (uploaded or bundled). The bundled defaults are white-
+   on-transparent; a dark-mode invert-ish backdrop keeps them
+   visible inside the light-edged settings panel. */
+.settings-row-icon-img {
+  width: 1.4rem;
+  height: 1.4rem;
+  object-fit: contain;
+  border-radius: 3px;
+  background: rgba(0,0,0,0.55);
+  padding: 1px;
+}
 .settings-row-label { font-size: 0.92rem; }
 .settings-swatch {
   display: inline-block;
@@ -373,6 +385,25 @@
   box-shadow: 0 0 0 2px rgba(200,160,64,0.35);
 }
 
+/* ── Attitude strength slider (Postoje k partě editor) ────── */
+.settings-strength-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.settings-strength-row input[type="range"] {
+  flex: 1;
+  min-width: 120px;
+  accent-color: var(--accent-gold);
+}
+.settings-strength-row output {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--text-parchment);
+  min-width: 3.2rem;
+  text-align: right;
+}
+
 /* ── Marker icon panel (pinTypes 🎨 toggle) ─────────────────── */
 .settings-btn-icons {
   background: transparent;
@@ -516,6 +547,40 @@
   font-size: 0.74rem;
   color: var(--text-muted);
 }
+
+/* ── Map selector tabs (Mapy panel) ─────────────────────────── */
+.settings-map-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid rgba(212,184,122,0.15);
+}
+.settings-map-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.7rem;
+  background: rgba(0,0,0,0.18);
+  border: 1px solid rgba(212,184,122,0.18);
+  border-radius: 6px;
+  color: var(--text-parchment);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.settings-map-tab:hover {
+  background: rgba(200,160,64,0.1);
+  border-color: rgba(212,184,122,0.45);
+}
+.settings-map-tab.is-active {
+  background: rgba(200,160,64,0.18);
+  border-color: var(--accent-gold);
+  color: var(--accent-gold);
+}
+.settings-map-tab-icon { font-size: 1rem; }
 
 /* ── Map-view preset groups ─────────────────────────────────── */
 .settings-mapviews-group { margin-bottom: 1.1rem; }

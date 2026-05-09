@@ -13,25 +13,24 @@ export const EditTemplates = (() => {
   }
 
   /** Multi-select chip row for "Postoje k partě" (attitudes).
-   *  Each chip toggles on/off; when on, an inline 0–100% slider sets
-   *  this entity's per-attitude `strength`. Read back via
-   *  `EditMode._readAttitudeChipRow(rowId)`. CSS shows the slider
-   *  only when the chip is checked (via `:has(input:checked)`). */
+   *  Each chip is a plain on/off toggle — the visual `intensity` of
+   *  the resulting glow is set per-attitude in Settings, not per
+   *  entity, so chips no longer carry per-chip sliders. Read back
+   *  via `EditMode._readAttitudeChipRow(rowId)`. */
   function _attitudeChipRow(rowId, currentEntries) {
     const enums = Store.getEnum('attitudes') || [];
-    // Tolerate the legacy string-array shape so the editor doesn't
-    // wipe data if someone hits Save before migrations finish on a
-    // very fresh install.
-    const byId = {};
+    // Tolerate the legacy `[{id, strength}]` and string-array shapes
+    // so the editor doesn't wipe data if someone hits Save before
+    // migrations finish on a very fresh install. The strength field
+    // (when present) is dropped — it's now sourced from the enum.
+    const checkedIds = new Set();
     for (const e of (currentEntries || [])) {
-      if (typeof e === 'string') byId[e] = 1.0;
-      else if (e && e.id)        byId[e.id] = (typeof e.strength === 'number') ? e.strength : 1.0;
+      if (typeof e === 'string') checkedIds.add(e);
+      else if (e && e.id)        checkedIds.add(e.id);
     }
     const items = enums.map(a => {
-      const checked  = a.id in byId;
-      const strength = checked ? byId[a.id] : 1.0;
-      const pct      = Math.round(strength * 100);
-      const color    = a.labelColor || a.bg || '#888';
+      const checked = checkedIds.has(a.id);
+      const color   = a.labelColor || a.bg || '#888';
       return `
         <div class="attitude-chip-item" data-att-id="${esc(a.id)}" style="--attitude-color: ${esc(color)}">
           <label class="attitude-chip">
@@ -39,12 +38,6 @@ export const EditTemplates = (() => {
             <span class="attitude-chip-dot"></span>
             <span class="attitude-chip-label">${esc(a.label)}</span>
           </label>
-          <div class="attitude-chip-strength">
-            <input type="range" class="attitude-chip-strength-slider"
-              min="0" max="1" step="0.1" value="${strength}"
-              ${dataOn('input', 'EditMode.updateStrengthReadout', '$el')}>
-            <span class="attitude-chip-strength-readout">${pct}%</span>
-          </div>
         </div>`;
     }).join('');
     return `<div class="attitude-chip-row" id="${rowId}">${items}</div>`;
@@ -955,10 +948,11 @@ export const EditTemplates = (() => {
   }
 
   /** Read the attitude chip row built by `_attitudeChipRow`.
-   *  Returns `[{id, strength: 0..1}]`. Skips items whose checkbox is
-   *  unchecked. Used by EditMode (character/location/faction save)
-   *  AND by map.js's pin-form save, so the read-back logic lives next
-   *  to the HTML template instead of being duplicated. */
+   *  Returns `[{id}]` — strength now lives on the `attitudes` settings
+   *  enum item, not on the entity. The object shape is preserved (vs
+   *  `[id]`) for forward compatibility with future per-entry fields.
+   *  Used by EditMode (character/location/faction save) AND by
+   *  map.js's pin-form save. */
   function _readAttitudeChipRow(rowId) {
     const row = document.getElementById(rowId);
     if (!row) return [];
@@ -969,11 +963,7 @@ export const EditTemplates = (() => {
       if (!cb || !cb.checked) return;
       const id = cb.value;
       if (!id) return;
-      const range = item.querySelector('input[type="range"]');
-      let s = range ? parseFloat(range.value) : 1.0;
-      if (!isFinite(s)) s = 1.0;
-      if (s < 0) s = 0; if (s > 1) s = 1;
-      out.push({ id, strength: s });
+      out.push({ id });
     });
     return out;
   }

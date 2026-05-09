@@ -130,6 +130,26 @@ export const WorldMap = (() => {
   }
   const _bundledDefaultUrl = bundledDefaultUrl;
 
+  // Public — resolves the appropriate icon URL for a wiki Location
+  // record (built via synthetic pin shape). Lets wiki.js render the
+  // same artwork on /mista cards and the location article side card
+  // that the map shows for that pin. Returns null when neither a
+  // user upload nor a bundled default is available; callers fall
+  // back to the emoji glyph in that case.
+  function resolveIconForLocation(l) {
+    if (!l) return null;
+    return _resolveIconUrl({
+      id:         l.id,
+      locationId: l.id,
+      type:       l.pinType || 'custom',
+      // Resolver consults `pin.statusId || pin.locationStatus || lookup`
+      // — passing the location's status here covers the state-based
+      // strategy without having to round-trip through the map module.
+      locationStatus: l.status || '',
+      attitudes:  l.attitudes,
+    });
+  }
+
   function _hashStr(s) {
     let h = 2166136261;
     const str = String(s || '');
@@ -203,6 +223,94 @@ export const WorldMap = (() => {
       return fromConst.size;
     }
     return PIN_SIZE_DEFAULT;
+  }
+
+  // ── Zoom-driven icon scaling ──────────────────────────────────
+  // Per-map config (`settings.mapConfigs[mapId].zoomScaleRatio`,
+  // 0..1) controls how aggressively markers grow/shrink with the
+  // map: 0 = constant pixel size (the existing behaviour), 1 =
+  // markers scale at the same rate as the map (always the same
+  // fraction of map area). The Leaflet zoom is logarithmic
+  // (each whole step = 2× / 0.5×), so the scale factor is
+  //   scale = 2^(ratio · zoom)
+  // where zoom = 0 corresponds to the image's "real" pixel
+  // resolution under CRS.Simple.
+  function _currentZoomScaleRatio() {
+    const cfg = Store.getMapConfig(_currentMapId());
+    const r = (cfg && typeof cfg.zoomScaleRatio === 'number') ? cfg.zoomScaleRatio : 0;
+    if (r < 0) return 0;
+    if (r > 1) return 1;
+    return r;
+  }
+  function _iconScaleAtZoom(z, ratio) {
+    if (!isFinite(z)) return 1;
+    if (ratio <= 0)   return 1;
+    return Math.pow(2, ratio * z);
+  }
+  // Walk every active marker and apply a CSS `transform: scale(...)`
+  // matching the current zoom × ratio. Cheap — one inline-style
+  // mutation per marker. The Leaflet click hit-area is unchanged
+  // (still tied to iconSize), so very large scale-ups can leave
+  // visual click area > hit area. Acceptable trade-off for v1.
+  function _applyMarkerScale() {
+    if (!_map) return;
+    const scale = _iconScaleAtZoom(_map.getZoom(), _currentZoomScaleRatio());
+    // The CSS rule on .sc-pin reads this custom property and applies
+    // it as the base scale; :hover multiplies it via calc(...) so
+    // the hover-zoom-on-hover animation still composes cleanly.
+    const value = scale.toFixed(3);
+    for (const m of Object.values(_markers)) {
+      const el  = m.getElement && m.getElement();
+      const pin = el && el.querySelector ? el.querySelector('.sc-pin') : null;
+      if (pin) pin.style.setProperty('--sc-pin-base-scale', value);
+    }
+  }
+  function _updateZoomReadout() {
+    const slider = document.getElementById('sc-zoom-slider');
+    const out    = document.getElementById('sc-zoom-readout');
+    if (!_map) return;
+    const z = _map.getZoom();
+    const display = Math.pow(2, z);
+    if (slider) slider.value = String(z);
+    if (out)    out.textContent = `${display.toFixed(2)}×`;
+  }
+  function _syncZoomSliderBounds() {
+    const slider = document.getElementById('sc-zoom-slider');
+    if (!_map || !slider) return;
+    const minZ = _map.getMinZoom();
+    const maxZ = _map.getMaxZoom();
+    if (Number.isFinite(minZ)) slider.min = String(minZ);
+    if (Number.isFinite(maxZ)) slider.max = String(maxZ);
+  }
+  function zoomSliderInput(value) {
+    if (!_map) return;
+    const z = parseFloat(value);
+    if (!isFinite(z)) return;
+    _map.setZoom(z);
+    // setZoom fires zoomend asynchronously which updates the readout,
+    // but the user expects the live value to track the slider drag —
+    // update the readout eagerly so it doesn't lag.
+    const out = document.getElementById('sc-zoom-readout');
+    if (out) out.textContent = `${Math.pow(2, z).toFixed(2)}×`;
+  }
+  function zoomReset() {
+    if (!_map) return;
+    // Clamp to the map's allowed range so a tiny image whose
+    // minZoom is > 0 doesn't refuse the call.
+    const minZ = _map.getMinZoom();
+    const maxZ = _map.getMaxZoom();
+    let target = 0;
+    if (Number.isFinite(minZ) && target < minZ) target = minZ;
+    if (Number.isFinite(maxZ) && target > maxZ) target = maxZ;
+    _map.setZoom(target);
+  }
+  // Public — Settings calls this after the GM tweaks the
+  // zoom-scale slider so the live map rescales markers without
+  // waiting for the next zoom event. No-op when the live map is
+  // showing a different map than the one being edited in Settings.
+  function applyZoomScaleRatio(mapId) {
+    if (mapId && mapId !== _currentMapId()) return;
+    _applyMarkerScale();
   }
 
   let _map       = null;
@@ -283,18 +391,14 @@ export const WorldMap = (() => {
   }
   function _attitudeGlowFilter(entries, blurPx = 5) {
     if (!Array.isArray(entries) || !entries.length) return '';
-    const enums = Store.getEnum('attitudes') || [];
-    const colors = Object.fromEntries(enums.map(a => [a.id, a.labelColor || a.bg || '#888']));
+    const stripes = _resolveAttitudeStripes(entries);
+    if (!stripes.length) return '';
     const layers = [];
     // Stack a tighter inner-glow per attitude so 100% strength reads
     // as a confident glow on small markers (mirrors wiki._attitudeGlow).
     const innerBlur = Math.max(2, Math.round(blurPx * 0.4));
-    for (const e of entries) {
-      if (!e) continue;
-      const id = (typeof e === 'string') ? e : e.id;
-      const s  = (typeof e === 'string') ? 1.0 : ((typeof e.strength === 'number') ? e.strength : 1.0);
-      if (!id || !colors[id] || s <= 0) continue;
-      const rgba = _hexToRgba(colors[id], s);
+    for (const s of stripes) {
+      const rgba = _hexToRgba(s.color, s.strength);
       layers.push(`drop-shadow(0 0 ${blurPx}px ${rgba})`);
       layers.push(`drop-shadow(0 0 ${innerBlur}px ${rgba})`);
     }
@@ -303,20 +407,27 @@ export const WorldMap = (() => {
 
   // Resolve attitude entries into a normalised list of `{id, strength,
   // color}` records — drops empties, zero-strength, and unknown ids
-  // up front so callers don't have to repeat the filtering. Used by
+  // up front so callers don't have to repeat the filtering. Strength
+  // is sourced from the `attitudes` settings enum (per-attitude),
+  // NOT from each entry — the per-entity strength field was retired
+  // (see `_migrateStrengthFromEntityToEnum` in store.js). Used by
   // both the simple stacked-glow and the segmented-stripe rendering
   // paths in `_pinIcon`.
   function _resolveAttitudeStripes(entries) {
     if (!Array.isArray(entries) || !entries.length) return [];
     const enums  = Store.getEnum('attitudes') || [];
-    const colors = Object.fromEntries(enums.map(a => [a.id, a.labelColor || a.bg || '#888']));
+    const byId   = Object.fromEntries(enums.map(a => [a.id, a]));
     const out = [];
     for (const e of entries) {
       if (!e) continue;
       const id = (typeof e === 'string') ? e : e.id;
-      const s  = (typeof e === 'string') ? 1.0 : ((typeof e.strength === 'number') ? e.strength : 1.0);
-      if (!id || !colors[id] || s <= 0) continue;
-      out.push({ id, strength: s, color: colors[id] });
+      if (!id) continue;
+      const meta = byId[id];
+      if (!meta) continue;
+      const color = meta.labelColor || meta.bg || '#888';
+      const s     = (typeof meta.strength === 'number') ? meta.strength : 1.0;
+      if (s <= 0) continue;
+      out.push({ id, strength: s, color });
     }
     return out;
   }
@@ -404,6 +515,13 @@ export const WorldMap = (() => {
             <button class="sc-btn"${dataAction('WorldMap.zoomFitAll')} title="Oddálit na celou mapu">🌐 Celá</button>
             ${_presetButtonsHtml()}
             <button class="sc-btn edit-only-inline"${dataAction('WorldMap.captureCurrentView')} title="Uložit aktuální pohled jako předvolbu">✚ Uložit pohled</button>
+          </span>
+          <span class="sc-zoom-slider" id="sc-zoom-slider-wrap" title="Plynulý zoom — 1.0× = originální rozlišení obrázku">
+            <button class="sc-btn sc-zoom-reset"${dataAction('WorldMap.zoomReset')} title="Resetovat zoom na 1.0× (skutečné rozlišení)">1×</button>
+            <input type="range" id="sc-zoom-slider"
+              min="-8" max="2" step="0.25" value="0"
+              ${dataOn('input', 'WorldMap.zoomSliderInput', '$value')}>
+            <output id="sc-zoom-readout">1.00×</output>
           </span>
           <button class="sc-btn edit-only-inline"${dataAction('WorldMap.showSettings')}>⚙ Mapa</button>
           <span class="sc-hint">${_addMode
@@ -529,6 +647,11 @@ export const WorldMap = (() => {
     if (_map.getZoom() < minZ) {
       _map.fitBounds(_bounds, { animate: true });
     }
+    // The slider's min was set from the static L.map options before
+    // `_fitZoom()` had a width to work with — refresh bounds and
+    // readout now that we know the actual lower limit.
+    _syncZoomSliderBounds();
+    _updateZoomReadout();
   }
 
   function _doInit(img, imgUrl, container) {
@@ -561,7 +684,15 @@ export const WorldMap = (() => {
     _markers = {};
     _pinsForCurrent().forEach(_placePin);
 
-    _map.on('zoomend', () => { _renderLegend(); });
+    _syncZoomSliderBounds();
+    _applyMarkerScale();
+    _updateZoomReadout();
+
+    _map.on('zoomend', () => {
+      _renderLegend();
+      _applyMarkerScale();
+      _updateZoomReadout();
+    });
 
     _map.on('click', evt => {
       if (!_addMode) return;
@@ -910,17 +1041,19 @@ export const WorldMap = (() => {
       : '';
 
     // Show every attitude label (comma-joined) so mixed-stance places
-    // read as "Chrám · Spojenec 100%, Nepřítel 50%" rather than only
-    // surfacing the primary stance. Strength % is omitted at 100%.
+    // read as "Chrám · Spojenec, Nepřítel 70%" rather than only
+    // surfacing the primary stance. Strength is now sourced from the
+    // `attitudes` settings enum (per-attitude); % is omitted at 100%.
     const attEntries = (pin.attitudes && pin.attitudes.length)
       ? pin.attitudes
-      : (pin.status ? [{ id: pin.status, strength: 1.0 }] : []);
+      : (pin.status ? [{ id: pin.status }] : []);
+    const attEnum = Store.getEnum('attitudes') || [];
     const attLabels = attEntries.map(e => {
       const id = (typeof e === 'string') ? e : e.id;
-      const strength = (typeof e === 'string') ? 1.0
-        : ((typeof e.strength === 'number') ? e.strength : 1.0);
       const s = statuses[id];
       if (!s) return '';
+      const def = attEnum.find(a => a.id === id);
+      const strength = (def && typeof def.strength === 'number') ? def.strength : 1.0;
       const pct = strength === 1.0 ? '' : ` ${Math.round(strength * 100)}%`;
       return `<span style="color:${s.labelColor}">${esc(s.label)}${esc(pct)}</span>`;
     }).filter(Boolean).join(', ');
@@ -1488,5 +1621,7 @@ export const WorldMap = (() => {
     openLocalMap, startPlacingPin,
     startPlacingEventPin, clearEventPin, showEventPin,
     bundledDefaultUrl,
+    resolveIconForLocation,
+    zoomSliderInput, zoomReset, applyZoomScaleRatio,
   };
 })();

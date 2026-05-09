@@ -7,7 +7,7 @@
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
 import { norm, esc, renderMarkdown, extractOutline, humanTime, dataAction, dataOn } from './utils.js';
-import { PIN_TYPES } from './map.js';
+import { PIN_TYPES, WorldMap } from './map.js';
 import { relLabel } from './data.js';
 import { PARTY_FACTION_ID } from './constants.js';
 
@@ -99,15 +99,22 @@ export const Wiki = (() => {
   // outer blur. The double layer makes strength=1.0 read as a
   // confident glow rather than a washed-out haze; alpha = strength
   // on both layers so 50% still looks proportionally subtle.
+  // Strength is sourced from the `attitudes` settings enum
+  // (per-attitude), NOT from each entity entry — see
+  // `_migrateStrengthFromEntityToEnum` in store.js.
   function _attitudeGlow(entries, colors, blurPx = GLOW_BLUR_PX) {
     if (!Array.isArray(entries) || !entries.length) return '';
+    const enums = Store.getEnum('attitudes') || [];
+    const strengthByEnum = Object.fromEntries(
+      enums.map(a => [a.id, (typeof a.strength === 'number') ? a.strength : 1.0])
+    );
     const layers = [];
     const innerBlur = Math.max(2, Math.round(blurPx * 0.4));
     for (const e of entries) {
       if (!e || !e.id) continue;
       const color = colors[e.id];
       if (!color) continue;
-      const s = (typeof e.strength === 'number') ? e.strength : 1.0;
+      const s = strengthByEnum[e.id] ?? 1.0;
       if (s <= 0) continue;
       const rgba = _hexToRgba(color, s);
       layers.push(`drop-shadow(0 0 ${blurPx}px ${rgba})`);
@@ -784,7 +791,9 @@ export const Wiki = (() => {
         const def = attEnum.find(a => a.id === e.id);
         if (!def) return '';
         const color = def.labelColor || def.bg || '#888';
-        const pct = e.strength === 1.0 ? '' : ` ${Math.round(e.strength * 100)}%`;
+        // Strength now lives on the enum item itself, not the entry.
+        const s = (typeof def.strength === 'number') ? def.strength : 1.0;
+        const pct = s === 1.0 ? '' : ` ${Math.round(s * 100)}%`;
         return `<span class="badge badge-attitude"
           style="background:${esc(color)}22;color:${esc(color)};border:1px solid ${esc(color)}66">●&nbsp;${esc(def.label)}${esc(pct)}</span>`;
       }).filter(Boolean).join(' ');
@@ -879,16 +888,22 @@ export const Wiki = (() => {
     const region = l.region ? `<div class="loc-card-sub">${esc(l.region)}</div>` : '';
     const editBtn = EditMode.isActive()
       ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
-    // Glow follows the pin emoji's silhouette — drop-shadow blurs the
-    // alpha channel of `.loc-card-icon`'s text so thin strokes get the
+    // Glow follows the icon silhouette — drop-shadow blurs the alpha
+    // channel of `.loc-card-icon`'s content so thin strokes get the
     // same halo as the bulk. Multiple attitudes layer additively.
     const glow = _attitudeGlow(Store.getEffectiveAttitudes(l, 'location'), colors);
+    // Prefer a real artwork SVG (user-uploaded or bundled default)
+    // over the emoji glyph, mirroring the map marker rendering.
+    const iconUrl = WorldMap.resolveIconForLocation(l);
+    const iconInner = iconUrl
+      ? `<img class="loc-card-icon-img" src="${esc(iconUrl)}" alt="" ${dataOn('error', 'hide', '$el')}>`
+      : esc(pt.icon);
     const iconStyle = glow
       ? `color:${pt.color};filter:${glow}`
       : `color:${pt.color}`;
     return `<a class="loc-card" href="#/misto/${l.id}" style="text-decoration:none;position:relative">
       ${editBtn}
-      <div class="loc-card-icon" style="${iconStyle}">${pt.icon}</div>
+      <div class="loc-card-icon" style="${iconStyle}">${iconInner}</div>
       <div class="loc-card-body">
         <div class="loc-card-name">${esc(l.name)}</div>
         <div class="loc-card-type">${esc(typeLabel)}</div>
@@ -1106,7 +1121,8 @@ export const Wiki = (() => {
       const def = locAttEnum.find(a => a.id === e.id);
       if (!def) continue;
       const color = def.labelColor || def.bg || '#888';
-      const pct = e.strength === 1.0 ? '' : ` ${Math.round(e.strength * 100)}%`;
+      const s = (typeof def.strength === 'number') ? def.strength : 1.0;
+      const pct = s === 1.0 ? '' : ` ${Math.round(s * 100)}%`;
       chips.push(`<span class="badge badge-attitude"
         style="background:${esc(color)}22;color:${esc(color)};border:1px solid ${esc(color)}66">●&nbsp;${esc(def.label)}${esc(pct)}</span>`);
     }
@@ -1119,8 +1135,14 @@ export const Wiki = (() => {
 
     const events = Store.getEventsAtLocation(l.id) || [];
 
+    // Prefer a real artwork SVG (user-uploaded or bundled default)
+    // over the emoji glyph; matches the map markers + loc-card grid.
+    const articleIconUrl = WorldMap.resolveIconForLocation(l);
+    const articleIconInner = articleIconUrl
+      ? `<img class="ah-icon-img" src="${esc(articleIconUrl)}" alt="" ${dataOn('error', 'hide', '$el')}>`
+      : esc(pt.icon);
     return _articleShell({
-      visual:   `<div class="ah-icon"${locGlow ? ` style="filter:${locGlow}"` : ''}>${pt.icon}</div>`,
+      visual:   `<div class="ah-icon"${locGlow ? ` style="filter:${locGlow}"` : ''}>${articleIconInner}</div>`,
       title:    esc(l.name),
       subtitle: `${esc(l.type || '')}${l.type && statusLabel ? ' · ' : ''}${esc(statusLabel)}`,
       chips,
@@ -1462,7 +1484,8 @@ export const Wiki = (() => {
       const def = facAttEnum.find(a => a.id === e.id);
       if (!def) continue;
       const color = def.labelColor || def.bg || '#888';
-      const pct = e.strength === 1.0 ? '' : ` ${Math.round(e.strength * 100)}%`;
+      const s = (typeof def.strength === 'number') ? def.strength : 1.0;
+      const pct = s === 1.0 ? '' : ` ${Math.round(s * 100)}%`;
       chips.push(`<span class="badge badge-attitude"
         style="background:${esc(color)}22;color:${esc(color)};border:1px solid ${esc(color)}66">●&nbsp;${esc(def.label)}${esc(pct)}</span>`);
     }

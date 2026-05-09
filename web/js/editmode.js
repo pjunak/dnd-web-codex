@@ -450,14 +450,10 @@ export const EditMode = (() => {
   // the same parser without duplicating the DOM walk).
   const _readAttitudeChipRow = EditTemplates.readAttitudeChipRow;
 
-  /** Live readout next to the strength slider as the user drags. */
-  function updateStrengthReadout(rangeEl) {
-    if (!rangeEl) return;
-    const out = rangeEl.parentElement?.querySelector('.attitude-chip-strength-readout');
-    if (!out) return;
-    const v = parseFloat(rangeEl.value);
-    out.textContent = `${Math.round((isFinite(v) ? v : 0) * 100)}%`;
-  }
+  // (Per-chip strength sliders were removed when strength moved off
+  // the entity onto the `attitudes` settings enum item — see
+  // `Settings.updateStrengthReadout` for the live-readout helper that
+  // now drives the strength slider in the Postoje k partě editor.)
 
   // ══════════════════════════════════════════════════════════════
   //  CHARACTER EDITOR
@@ -1257,7 +1253,6 @@ export const EditMode = (() => {
     saveCharacter, deleteCharacter, onGenderChange,
     addRelationship, updateRelationship, deleteRelationship, relTypeChanged,
     saveLocation, deleteLocation, uploadLocalMap,
-    updateStrengthReadout,
     saveEvent, deleteEvent, addPartyToEvent,
     saveMystery, deleteMystery,
     saveFaction, deleteFaction,

@@ -408,6 +408,18 @@
   margin-bottom: 0.55rem;
   filter: drop-shadow(0 2px 3px rgba(0,0,0,0.5));
 }
+/* When a real SVG artwork is available (user-uploaded or bundled
+   default) we render an <img> in place of the emoji. The image fills
+   the same visual box as the 2.2rem emoji so the card layout
+   doesn't shift, with object-fit:contain to preserve aspect. The
+   parent's `filter: drop-shadow(...)` follows the image's alpha
+   channel so the attitude glow still hugs the silhouette. */
+.loc-card-icon-img {
+  width: 2.6rem;
+  height: 2.6rem;
+  object-fit: contain;
+  display: inline-block;
+}
 .loc-card-body { text-align: center; width: 100%; }
 .loc-card-name {
   font-family: var(--font-title);
@@ -537,54 +549,10 @@
   background: color-mix(in srgb, var(--attitude-color, #888) 12%, transparent);
 }
 
-/* Strength slider — hidden until the chip is checked. Lives below
-   the chip so the row stays scannable when nothing is active.    */
-.attitude-chip-strength {
-  display: none;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.1rem 0.3rem 0.1rem 0.5rem;
-}
-.attitude-chip-item:has(input[type="checkbox"]:checked) .attitude-chip-strength {
-  display: flex;
-}
-.attitude-chip-strength-slider {
-  flex: 1;
-  min-width: 80px;
-  height: 4px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: rgba(255,255,255,0.12);
-  border-radius: 100px;
-  cursor: pointer;
-  accent-color: var(--attitude-color, var(--accent-gold));
-}
-.attitude-chip-strength-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--attitude-color, var(--accent-gold));
-  border: 1px solid rgba(0,0,0,0.4);
-  cursor: pointer;
-}
-.attitude-chip-strength-slider::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--attitude-color, var(--accent-gold));
-  border: 1px solid rgba(0,0,0,0.4);
-  cursor: pointer;
-}
-.attitude-chip-strength-readout {
-  font-family: var(--font-ui);
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  min-width: 2.5rem;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
+/* (Per-chip strength sliders were retired when intensity moved
+   onto the `attitudes` settings enum item — chips are now plain
+   on/off toggles. The Postoje k partě editor in /nastaveni hosts
+   the slider via `.settings-strength-row`.)                       */
 
 /* Attitude filter pills on list pages */
 .filter-bar-attitudes { margin-top: -0.5rem; }
@@ -789,6 +757,14 @@
   border-radius: 8px;
   background: rgba(0,0,0,0.25);
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+/* SVG artwork variant of .ah-icon (user-uploaded or bundled). Sized
+   to leave a comfortable margin inside the 100%×1:1 box so the
+   image isn't flush against the rounded background. */
+.ah-icon-img {
+  width: 70%;
+  height: 70%;
+  object-fit: contain;
 }
 .ah-meta { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
 .ah-meta h1 {

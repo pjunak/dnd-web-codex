@@ -382,6 +382,65 @@ export const Store = (() => {
     return { pinTypesTouched, touchedLocations: touched };
   }
 
+  // Promote attitude `strength` from per-entity to per-enum-item.
+  // Earlier the field lived on each entity's attitude entry
+  // (`{id, strength}`) and the renderer read it back per-record. The
+  // new model puts strength on the `attitudes` settings item instead,
+  // so editing intensity in Settings updates every glow at once.
+  // Strip strength from every entity attitude entry; the renderer
+  // will look it up from `_data.settings.attitudes[id].strength`.
+  // Idempotent — re-runs find no `strength` field on any entry.
+  //
+  // Returns `{ characters[], locations[], factions: [{id, fac}] }`
+  // touched on first run so load() can sync each via the per-entity
+  // PATCH path.
+  function _migrateStrengthFromEntityToEnum() {
+    if (!_data) return { characters: [], locations: [], factions: [] };
+    const out = { characters: [], locations: [], factions: [] };
+    const stripStrength = (arr) => {
+      if (!Array.isArray(arr)) return null;
+      let changed = false;
+      const next = arr.map(e => {
+        if (e && typeof e === 'object' && 'strength' in e) {
+          changed = true;
+          const { strength, ...rest } = e;  // eslint-disable-line no-unused-vars
+          return rest;
+        }
+        return e;
+      });
+      return changed ? next : null;
+    };
+    for (const c of _data.characters || []) {
+      const next = stripStrength(c.attitudes);
+      if (next) { c.attitudes = next; out.characters.push(c); }
+    }
+    for (const l of _data.locations || []) {
+      const next = stripStrength(l.attitudes);
+      if (next) { l.attitudes = next; out.locations.push(l); }
+    }
+    for (const [id, f] of Object.entries(_data.factions || {})) {
+      if (!f || typeof f !== 'object') continue;
+      const next = stripStrength(f.attitudes);
+      if (next) { f.attitudes = next; out.factions.push({ id, fac: f }); }
+    }
+    return out;
+  }
+
+  // Seed `strength` on `attitudes` settings items so the renderer
+  // always has a number to work with. Defaults to 1.0 when missing.
+  // Idempotent.
+  function _seedAttitudeStrength() {
+    if (!_data?.settings?.attitudes) return false;
+    let touched = false;
+    for (const a of _data.settings.attitudes) {
+      if (typeof a.strength !== 'number') {
+        a.strength = 1.0;
+        touched = true;
+      }
+    }
+    return touched;
+  }
+
   // Seed numeric `severity` on `locationStatuses` items so the marker
   // icon resolver can do closest-match fallback when a place's exact
   // status has no assigned icon variant. Known seeded ids get their
@@ -473,20 +532,27 @@ export const Store = (() => {
           const pinSize         = _migratePinPriorityToSize();
           const locStatus       = _migrateLocationStatusToManaged();
           const severitySeeded  = _seedLocationStatusSeverity();
+          const strengthMigrated = _migrateStrengthFromEntityToEnum();
+          const strengthSeeded  = _seedAttitudeStrength();
           for (const c of capturedTouched)            _sync('characters', 'save', c);
           for (const l of mapStatus.touchedLocations) _sync('locations', 'save', l);
           if (mapStatus.droppedSettingsCat)           _sync('settings', 'delete', { id: 'mapStatuses' });
           for (const c of attShape.characters)        _sync('characters', 'save', c);
           for (const l of attShape.locations)         _sync('locations',  'save', l);
           for (const { id, fac } of attShape.factions) _sync('factions',  'save', { id, data: fac });
-          if (droppedUnknown || locStatus.settingsTouched || pinSize.pinTypesTouched || severitySeeded) {
+          if (droppedUnknown || locStatus.settingsTouched || pinSize.pinTypesTouched || severitySeeded || strengthSeeded) {
             // Push the post-migration settings category arrays.
-            if (droppedUnknown)            _sync('settings', 'save', { id: 'attitudes',        data: _data.settings.attitudes });
+            if (droppedUnknown || strengthSeeded) {
+              _sync('settings', 'save', { id: 'attitudes', data: _data.settings.attitudes });
+            }
             if (locStatus.settingsTouched || severitySeeded) {
               _sync('settings', 'save', { id: 'locationStatuses', data: _data.settings.locationStatuses });
             }
             if (pinSize.pinTypesTouched)   _sync('settings', 'save', { id: 'pinTypes',         data: _data.settings.pinTypes });
           }
+          for (const c of strengthMigrated.characters) _sync('characters', 'save', c);
+          for (const l of strengthMigrated.locations)  _sync('locations',  'save', l);
+          for (const { id, fac } of strengthMigrated.factions) _sync('factions', 'save', { id, data: fac });
           for (const l of pinSize.touchedLocations)   _sync('locations', 'save', l);
           for (const l of locStatus.touchedLocations) _sync('locations', 'save', l);
           _reindex();
@@ -1208,6 +1274,37 @@ export const Store = (() => {
     return { ok: true, usages };
   }
 
+  // ── Per-map config ───────────────────────────────────────────
+  // Each map (world map + every location with `localMap`) carries
+  // its own knobs that the renderer in map.js consults — currently
+  // just `zoomScaleRatio` (0..1, controls how much markers grow/
+  // shrink with zoom: 0 = constant pixel size, 1 = scales with the
+  // map). Stored under `settings.mapConfigs[mapId]` so it
+  // round-trips through the existing settings PATCH path; per-id
+  // tombstones aren't needed because the server treats the whole
+  // category as one blob. mapId is `world` for the main map and
+  // `local-${locationId}` for sub-maps (matches `_currentMapId`
+  // in map.js).
+  function _defaultMapConfig() {
+    return { zoomScaleRatio: 0 };
+  }
+  function getMapConfig(mapId) {
+    init();
+    const all = (_data.settings && _data.settings.mapConfigs) || {};
+    return { ..._defaultMapConfig(), ...(all[mapId] || {}) };
+  }
+  function setMapConfig(mapId, patch) {
+    init();
+    if (!_data.settings) _data.settings = {};
+    if (!_data.settings.mapConfigs || typeof _data.settings.mapConfigs !== 'object') {
+      _data.settings.mapConfigs = {};
+    }
+    const next = { ...getMapConfig(mapId), ...(patch || {}) };
+    _data.settings.mapConfigs[mapId] = next;
+    _sync('settings', 'save', { id: 'mapConfigs', data: _data.settings.mapConfigs });
+    return next;
+  }
+
   // ── Sidebar visibility ───────────────────────────────────────
   // Stored under `settings.hiddenSidebarPages` as a flat array of
   // route strings (e.g. `['/druhy', '/historie']`). Round-trips
@@ -1511,6 +1608,7 @@ export const Store = (() => {
     getSettings, getEnum, getEnumValue, getEffectiveAttitudes,
     saveEnumItem, deleteEnumItem, findEnumUsages, resetEnumCategory,
     getHiddenSidebarPages, setHiddenSidebarPages,
+    getMapConfig, setMapConfig,
     getCampaign, setCampaign,
     generateId, exportJSON,
   };

@@ -92,9 +92,17 @@
   cursor: pointer;
   transition: transform 0.15s;
   line-height: 1;
+  /* `--sc-pin-base-scale` is set inline by `_applyMarkerScale` in
+     map.js whenever the zoom or per-map zoom-scale-ratio changes.
+     1 = constant pixel size; >1 = enlarged on zoom-in; <1 = shrunk
+     on zoom-out. Hover multiplies it via calc() below so the
+     hover-pop animation still works regardless of zoom level. */
+  --sc-pin-base-scale: 1;
+  transform: scale(var(--sc-pin-base-scale));
+  transform-origin: center center;
 }
 .sc-pin:hover {
-  transform: scale(1.25);
+  transform: scale(calc(var(--sc-pin-base-scale) * 1.25));
   z-index: 1000;
 }
 /* Custom-uploaded marker artwork — fills the pin's box completely so
@@ -285,6 +293,34 @@
   margin-left: 0.4rem;
   padding-left: 0.6rem;
   border-left: 1px solid rgba(212,184,122,0.18);
+}
+
+/* ── Continuous zoom slider + 1× reset + readout ─────────────── */
+.sc-zoom-slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: 0.4rem;
+  padding-left: 0.6rem;
+  border-left: 1px solid rgba(212,184,122,0.18);
+}
+.sc-zoom-slider input[type="range"] {
+  width: 110px;
+  accent-color: var(--accent-gold);
+  cursor: pointer;
+}
+.sc-zoom-slider output {
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 3.4rem;
+  text-align: right;
+}
+.sc-zoom-reset {
+  /* Same .sc-btn styling, just slightly tighter for the toolbar. */
+  padding: 0.25rem 0.5rem;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Pin priority radio row in edit form ─────────────────────── */
