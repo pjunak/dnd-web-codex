@@ -260,7 +260,14 @@ export const Store = (() => {
 
     // Returns a normalised array if any change is needed; null when
     // the input is already in canonical shape (so the caller can
-    // skip a no-op sync).
+    // skip a no-op sync). The canonical shape is `[{id}]` (no
+    // `strength` field — strength now lives on the `attitudes`
+    // settings enum item, see `_migrateStrengthFromEntityToEnum`).
+    // It is CRUCIAL that this normalize function does not re-add
+    // strength to entries that are already canonical, otherwise
+    // it bounces with `_migrateStrengthFromEntityToEnum` on every
+    // load and the resulting infinite SSE-driven re-render loop
+    // makes the page flicker until you force-close it.
     const normalize = (arr) => {
       if (!Array.isArray(arr)) return null;
       let changed = false;
@@ -272,17 +279,20 @@ export const Store = (() => {
           if (e === 'unknown' || !e) continue;
           if (seen.has(e)) continue;
           seen.add(e);
-          next.push({ id: e, strength: 1.0 });
+          next.push({ id: e });
         } else if (e && typeof e === 'object' && typeof e.id === 'string') {
           if (e.id === 'unknown') { changed = true; continue; }
           if (seen.has(e.id))      { changed = true; continue; }
           seen.add(e.id);
-          let s = (typeof e.strength === 'number') ? e.strength : 1.0;
-          if (s < 0) s = 0;
-          if (s > 1) s = 1;
-          if (e.strength !== s) changed = true;
-          // Keep extra fields (forward-compatibility) but normalise core ones.
-          next.push({ ...e, id: e.id, strength: s });
+          if ('strength' in e) {
+            // Drop the legacy strength field (now per-enum).
+            changed = true;
+            const { strength, ...rest } = e;  // eslint-disable-line no-unused-vars
+            next.push({ ...rest, id: e.id });
+          } else {
+            // Already canonical — preserve as-is, no `changed` bump.
+            next.push(e);
+          }
         } else {
           changed = true; // drop garbage
         }
@@ -297,7 +307,7 @@ export const Store = (() => {
         const legacy = c.attitude;
         if (typeof legacy === 'string' && legacy && legacy !== 'unknown'
             && (!Array.isArray(c.attitudes) || c.attitudes.length === 0)) {
-          c.attitudes = [{ id: legacy, strength: 1.0 }];
+          c.attitudes = [{ id: legacy }];
         }
         delete c.attitude;
         touched = true;

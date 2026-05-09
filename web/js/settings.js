@@ -65,6 +65,22 @@ export const Settings = (() => {
   // with `_currentMapId` in map.js and the keys used in
   // `settings.mapConfigs`.
   let _activeMapId = 'world';
+  // Cache-bust token applied to map preview <img> URLs. Stays
+  // stable across renders so the browser caches the image normally;
+  // bumped only when an upload actually replaces a file (or when
+  // the page first mounts, to dodge a stale CDN cache from a prior
+  // session). Earlier `?v=${Date.now()}` per render meant every
+  // re-render generated a different URL → constant refetch =
+  // visible flicker, especially when paired with the SSE-driven
+  // re-render loop that older non-idempotent migrations triggered.
+  const _previewBust = {};   // mapId → token
+  function _previewBustFor(mapId) {
+    if (!_previewBust[mapId]) _previewBust[mapId] = String(Date.now());
+    return _previewBust[mapId];
+  }
+  function _bumpPreviewBust(mapId) {
+    _previewBust[mapId] = String(Date.now());
+  }
 
   // ── Render ───────────────────────────────────────────────────
   function render() {
@@ -918,7 +934,7 @@ export const Settings = (() => {
       : `Uloží se jako <code>/maps/local/${esc(current.locationId)}/map.&lt;ext&gt;</code> a server přegeneruje dlaždice na pozadí.`;
     const uploadDataset = current.isWorld ? '' : ` data-loc-id="${esc(current.locationId)}"`;
 
-    const previewSrc  = current.imgUrl ? `${current.imgUrl}?v=${Date.now()}` : '';
+    const previewSrc  = current.imgUrl ? `${current.imgUrl}?v=${_previewBustFor(_activeMapId)}` : '';
     const previewHtml = previewSrc
       ? `<div class="settings-worldmap-preview">
            <img src="${esc(previewSrc)}" alt="" ${dataOn('error', 'hide', '$el')}>
@@ -1038,6 +1054,7 @@ export const Settings = (() => {
         // file in WorldMap._getImgUrl, so drop it after a successful
         // upload — the server copy is now the canonical image.
         try { localStorage.removeItem('world_map_image_url'); } catch (_) {}
+        _bumpPreviewBust('world');
         _flash('Mapa nahrána — přegenerovávám dlaždice na pozadí…');
         render();
       })
@@ -1057,6 +1074,7 @@ export const Settings = (() => {
         // picks up the new URL on next render.
         const loc = Store.getLocation(locId);
         if (loc) Store.saveLocation({ ...loc, localMap: url });
+        _bumpPreviewBust(`local-${locId}`);
         _flash('Mapa nahrána — přegenerovávám dlaždice na pozadí…');
         render();
       })
