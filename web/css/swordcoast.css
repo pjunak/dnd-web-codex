@@ -83,6 +83,9 @@
    with the priority system; attitudes show through `filter:
    drop-shadow(...)` on the inline style. */
 .sc-pin {
+  /* `position: relative` anchors absolute-positioned segment layers
+     used by the multi-attitude striped glow renderer. */
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -114,6 +117,31 @@
   line-height: 1;
   pointer-events: none;
   user-select: none;
+}
+
+/* ── Multi-attitude striped glow ────────────────────────────────
+   When a pin carries 2+ active attitudes, _pinIcon renders one
+   stacked copy of the icon per attitude, each with its own
+   drop-shadow filter and a sheared `clip-path` polygon so the
+   glow colours stripe across the marker (TF2-style diagonal slab
+   cuts) instead of blending into one muddy halo. Both classes are
+   pointer-transparent so Leaflet's click handler still fires on
+   the parent .sc-pin. */
+.sc-pin-icon-segment,
+.sc-pin-emoji-segment {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
+}
+.sc-pin-icon-segment { object-fit: contain; }
+.sc-pin-emoji-segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 /* Pin form — paired range + number input for marker size. */

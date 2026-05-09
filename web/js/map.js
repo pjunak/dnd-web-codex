@@ -300,6 +300,62 @@ export const WorldMap = (() => {
     }
     return layers.join(' ');
   }
+
+  // Resolve attitude entries into a normalised list of `{id, strength,
+  // color}` records — drops empties, zero-strength, and unknown ids
+  // up front so callers don't have to repeat the filtering. Used by
+  // both the simple stacked-glow and the segmented-stripe rendering
+  // paths in `_pinIcon`.
+  function _resolveAttitudeStripes(entries) {
+    if (!Array.isArray(entries) || !entries.length) return [];
+    const enums  = Store.getEnum('attitudes') || [];
+    const colors = Object.fromEntries(enums.map(a => [a.id, a.labelColor || a.bg || '#888']));
+    const out = [];
+    for (const e of entries) {
+      if (!e) continue;
+      const id = (typeof e === 'string') ? e : e.id;
+      const s  = (typeof e === 'string') ? 1.0 : ((typeof e.strength === 'number') ? e.strength : 1.0);
+      if (!id || !colors[id] || s <= 0) continue;
+      out.push({ id, strength: s, color: colors[id] });
+    }
+    return out;
+  }
+
+  // Drop-shadow filter for a single attitude stripe (used by the
+  // segmented multi-attitude renderer where each slab gets its own
+  // filter rather than one big additive stack).
+  function _stripeGlowFilter(att, blurPx) {
+    const innerBlur = Math.max(2, Math.round(blurPx * 0.4));
+    const rgba = _hexToRgba(att.color, att.strength);
+    return `drop-shadow(0 0 ${blurPx}px ${rgba}) drop-shadow(0 0 ${innerBlur}px ${rgba})`;
+  }
+
+  // Sheared vertical-slab clip-path for stripe `i` of `N` (TF2-style
+  // diagonal cut between bands — looks better than a hard vertical
+  // line). The first/last stripes extend past the marker box on
+  // their outer side so drop-shadow blooms freely on the marker's
+  // left/right edges; every stripe extends one box-height past the
+  // top and bottom too, with the shear angle preserved at y=0 and
+  // y=1 so the cut still hits the icon at the intended angle.
+  function _stripeClipPath(i, N) {
+    if (N <= 1) return '';
+    const shear  = 0.65 / N;          // shear amount in 0..1 coords
+    const left   = i / N;
+    const right  = (i + 1) / N;
+    // Extend `yExt` box-heights above/below; the x-coords at the
+    // extended y must be moved further out so the line through the
+    // box edges still has the correct slope.
+    const yExt   = 1.0;
+    const xCoef  = 1 + 2 * yExt;      // = 3 when yExt = 1
+    const tlx = (i === 0)     ? -1.0 : (left  + xCoef * shear);
+    const trx = (i === N - 1) ?  2.0 : (right + xCoef * shear);
+    const brx = (i === N - 1) ?  2.0 : (right - xCoef * shear);
+    const blx = (i === 0)     ? -1.0 : (left  - xCoef * shear);
+    const topY = (-yExt * 100).toFixed(0);
+    const botY = ((1 + yExt) * 100).toFixed(0);
+    const f = v => (v * 100).toFixed(2);
+    return `polygon(${f(tlx)}% ${topY}%, ${f(trx)}% ${topY}%, ${f(brx)}% ${botY}%, ${f(blx)}% ${botY}%)`;
+  }
   // All pins for the currently-displayed map (world or a local sub-map).
   function _pinsForCurrent() {
     return Store.getLocationsOnMap(_currentParentId).map(_pinFromLocation);
@@ -618,6 +674,8 @@ export const WorldMap = (() => {
   function _pinIcon(pin) {
     const pt   = PIN_TYPES[pin.type]  || PIN_TYPES.custom;
     const size = _resolvePinSize(pin);
+    const fontPx = Math.round(size * 0.85);
+    const blurPx = Math.max(5, Math.round(size * 0.22));
     // 1px multi-direction dark stroke + soft halo so the bare emoji
     // stays legible on any tile colour. Replaces the old "solid pin
     // fill" approach — attitudes show via the colored drop-shadow
@@ -630,9 +688,6 @@ export const WorldMap = (() => {
       '0 1px 0 rgba(0,0,0,0.75)',
       '0 0 4px rgba(0,0,0,0.55)',
     ].join(', ');
-    // Glow halo — one colored drop-shadow per active attitude, blended
-    // additively. Empty array = no filter (no glow).
-    const glow = _attitudeGlowFilter(pin.attitudes || [], Math.max(5, Math.round(size * 0.22)));
 
     // Custom marker artwork — when the pin type has uploaded icons
     // configured, the resolver returns a URL; otherwise it falls through
@@ -642,27 +697,55 @@ export const WorldMap = (() => {
     // For SVG icons we add a stacked black drop-shadow as a 1 px outline
     // so the (mostly-white) artwork stays legible on any tile colour —
     // analogous to the multi-direction text-shadow stroke used on the
-    // emoji branch. Stacks on top of any attitude glow.
-    const svgOutline = `drop-shadow(0 0 1px rgba(0,0,0,0.95)) drop-shadow(0 0 1px rgba(0,0,0,0.95))`;
-    const filterParts = [];
-    if (iconUrl) filterParts.push(svgOutline);
-    if (glow)    filterParts.push(glow);
-    const filterAttr = filterParts.length ? `filter:${filterParts.join(' ')};` : '';
+    // emoji branch. Stacks alongside any attitude glow.
+    const svgOutline = iconUrl
+      ? `drop-shadow(0 0 1px rgba(0,0,0,0.95)) drop-shadow(0 0 1px rgba(0,0,0,0.95))`
+      : '';
 
-    const inner = iconUrl
-      ? `<img class="sc-pin-icon" src="${esc(iconUrl)}" alt="" draggable="false">`
-      // Slightly larger emoji-to-box ratio (was 0.55) since there's no
-      // background plate eating the vertical space anymore.
-      : `<span class="sc-pin-emoji" style="font-size:${Math.round(size * 0.85)}px;text-shadow:${textShadow};">${pt.icon}</span>`;
+    // Build the visible layer(s).
+    //   • 0 attitudes → one layer, no glow (just outline for SVG, plain emoji otherwise).
+    //   • 1 attitude  → one layer, single coloured glow.
+    //   • 2+ attitudes → one layer per attitude, each clipped to a sheared
+    //                    vertical slab so the colours stripe rather than
+    //                    blend into a muddy single colour. Outer slabs
+    //                    extend past the box so the halo blooms unclipped
+    //                    on the marker's left/right edges.
+    const stripes = _resolveAttitudeStripes(pin.attitudes || []);
+    const N = stripes.length;
+    const layerHtml = (filterStr, clipStr, isOnlyLayer) => {
+      const cls = isOnlyLayer
+        ? (iconUrl ? 'sc-pin-icon'  : 'sc-pin-emoji')
+        : (iconUrl ? 'sc-pin-icon-segment' : 'sc-pin-emoji-segment');
+      const styles = [];
+      if (filterStr) styles.push(`filter:${filterStr}`);
+      if (clipStr)   styles.push(`clip-path:${clipStr};-webkit-clip-path:${clipStr}`);
+      if (!iconUrl)  styles.push(`font-size:${fontPx}px`, `text-shadow:${textShadow}`);
+      const styleAttr = styles.length ? ` style="${styles.join(';')}"` : '';
+      return iconUrl
+        ? `<img class="${cls}" src="${esc(iconUrl)}" alt="" draggable="false"${styleAttr}>`
+        : `<span class="${cls}"${styleAttr}>${pt.icon}</span>`;
+    };
+
+    let inner;
+    if (N <= 1) {
+      const glow = N === 1 ? _stripeGlowFilter(stripes[0], blurPx) : '';
+      const filterStr = [svgOutline, glow].filter(Boolean).join(' ');
+      inner = layerHtml(filterStr, '', /* isOnlyLayer */ true);
+    } else {
+      const segments = [];
+      for (let i = 0; i < N; i++) {
+        const filterStr = [svgOutline, _stripeGlowFilter(stripes[i], blurPx)].filter(Boolean).join(' ');
+        const clipStr   = _stripeClipPath(i, N);
+        segments.push(layerHtml(filterStr, clipStr, /* isOnlyLayer */ false));
+      }
+      inner = segments.join('');
+    }
 
     return L.divIcon({
       className: '',
       iconSize:  [size, size],
       iconAnchor:[size/2, size/2],
-      html: `<div class="sc-pin sc-pin-${pin.status}" style="
-        width:${size}px;height:${size}px;
-        ${filterAttr}
-      " title="${esc(pin.name)}">${inner}</div>`,
+      html: `<div class="sc-pin sc-pin-${pin.status}" style="width:${size}px;height:${size}px;" title="${esc(pin.name)}">${inner}</div>`,
     });
   }
 
