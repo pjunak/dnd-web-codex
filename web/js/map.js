@@ -267,6 +267,8 @@ export const WorldMap = (() => {
   }
   function _updateZoomReadout() {
     const slider = document.getElementById('sc-zoom-slider');
+    // Readout is now the `1×`-reset button itself — clicking it resets,
+    // and the label always reflects the live zoom value.
     const out    = document.getElementById('sc-zoom-readout');
     if (!_map) return;
     const z = _map.getZoom();
@@ -545,15 +547,22 @@ export const WorldMap = (() => {
                Vertical slider so the +/− anchors line up naturally with
                zoom-in (top) and zoom-out (bottom). -->
           <div class="sc-zoom-panel" id="sc-zoom-panel" title="Zoom — 1.0× = skutečné rozlišení">
-            <button class="sc-zoom-step" type="button"${dataAction('WorldMap.zoomStep', 1)} title="Přiblížit">+</button>
+            <button class="sc-zoom-btn" type="button"${dataAction('WorldMap.zoomStep', 1)} title="Přiblížit" aria-label="Přiblížit">+</button>
             <input type="range" id="sc-zoom-slider"
               class="sc-zoom-slider-vertical"
               orient="vertical"
               min="-8" max="2" step="0.25" value="0"
+              aria-label="Plynulý zoom"
               ${dataOn('input', 'WorldMap.zoomSliderInput', '$value')}>
-            <button class="sc-zoom-step" type="button"${dataAction('WorldMap.zoomStep', -1)} title="Oddálit">−</button>
-            <button class="sc-zoom-reset" type="button"${dataAction('WorldMap.zoomReset')} title="Resetovat zoom na 1.0× (skutečné rozlišení)">1×</button>
-            <output id="sc-zoom-readout">1.00×</output>
+            <button class="sc-zoom-btn" type="button"${dataAction('WorldMap.zoomStep', -1)} title="Oddálit" aria-label="Oddálit">−</button>
+            <!-- Live readout doubles as the 1× reset button: shows current
+                 zoom (e.g. "1.50×"), click to snap back to 1.00×. Combines
+                 two prior elements into one to keep the panel compact. -->
+            <button class="sc-zoom-btn sc-zoom-readout-btn" type="button"
+              id="sc-zoom-readout"
+              ${dataAction('WorldMap.zoomReset')}
+              title="Klikni pro reset na 1.0× (skutečné rozlišení)"
+              aria-label="Aktuální zoom — klikni pro reset">1.00×</button>
           </div>
         </div>
         <div class="sc-legend" id="sc-legend"></div>
@@ -1126,11 +1135,15 @@ export const WorldMap = (() => {
     // Live SVG preview of the resolved marker artwork — what the pin
     // will actually look like on the map. The native <select> below
     // can only render emoji glyphs in <option>s, so this companion
-    // image gives the GM the real preview.
+    // image gives the GM the real preview. Display size scales with
+    // the resolved marker size (clamped to [22, 40]) so a tavern and
+    // a major city read as visibly different even in the form.
     const previewUrl = _resolveIconUrl(pin);
+    const previewSize = _previewSizeForPin(pin);
+    const previewStyle = ` style="--spf-preview-size:${previewSize}px"`;
     const previewHtml = previewUrl
-      ? `<img id="spf-type-preview" class="spf-type-preview" src="${esc(previewUrl)}" alt="" draggable="false">`
-      : `<span id="spf-type-preview" class="spf-type-preview spf-type-preview-emoji">${(PIN_TYPES[pin.type]||PIN_TYPES.custom).icon}</span>`;
+      ? `<img id="spf-type-preview" class="spf-type-preview" src="${esc(previewUrl)}" alt="" draggable="false"${previewStyle}>`
+      : `<span id="spf-type-preview" class="spf-type-preview spf-type-preview-emoji"${previewStyle}>${(PIN_TYPES[pin.type]||PIN_TYPES.custom).icon}</span>`;
     // Pin form exposes the full attitudes array (with per-attitude
     // strength sliders) so multi-stance places can be edited from the
     // map without switching to the wiki editor. Same chip-row helper
@@ -1246,6 +1259,19 @@ export const WorldMap = (() => {
     _openPinPanel(loc.id);
   }
 
+  // Display size for the pin form's preview block. Tracks the
+  // resolved marker size but clamps to a sane visual range so very
+  // small (14px) or very large (64px) markers still read clearly in
+  // the side panel context. The preview is informative, not pixel-
+  // accurate.
+  const PREVIEW_SIZE_MIN = 22;
+  const PREVIEW_SIZE_MAX = 40;
+  function _previewSizeForPin(pin) {
+    const s = _resolvePinSize(pin || {});
+    if (!Number.isFinite(s)) return 32;
+    return Math.max(PREVIEW_SIZE_MIN, Math.min(PREVIEW_SIZE_MAX, s));
+  }
+
   // Re-render the SVG/emoji preview block in the pin form when the
   // user changes the Type dropdown. The form is otherwise static, so
   // we patch the preview node in place rather than rebuilding the
@@ -1259,13 +1285,20 @@ export const WorldMap = (() => {
     // `random` strategy stays deterministic across retypes; status
     // pulled from the location for `state` strategy.
     const loc = _editPinId ? Store.getLocation(_editPinId) : null;
+    // Prefer the form's live size input over the saved value so the
+    // preview tracks the size slider in real time.
+    const sizeInput = document.getElementById('spf-size');
+    const liveSize  = sizeInput ? parseInt(sizeInput.value, 10) : NaN;
+    const fallback  = (loc && typeof loc.size === 'number') ? loc.size : undefined;
     const synth = {
       id:         _editPinId || '',
       locationId: _editPinId || '',
       type,
       locationStatus: loc?.status || '',
+      size:       Number.isFinite(liveSize) && liveSize > 0 ? liveSize : fallback,
     };
     const url = _resolveIconUrl(synth);
+    const previewSize = _previewSizeForPin(synth);
     let next;
     if (url) {
       next = document.createElement('img');
@@ -1280,15 +1313,19 @@ export const WorldMap = (() => {
       next.className = 'spf-type-preview spf-type-preview-emoji';
       next.textContent = (PIN_TYPES[type] || PIN_TYPES.custom).icon;
     }
+    next.style.setProperty('--spf-preview-size', previewSize + 'px');
     cur.replaceWith(next);
   }
 
   // Slider ↔ number-input mirrors for the pin form's size control.
-  // Each writes to the other so the visible value stays in sync.
+  // Each writes to the other so the visible value stays in sync, and
+  // both nudge the live preview block so the GM sees the size change
+  // before saving.
   function syncSizeFromRange() {
     const r = document.getElementById('spf-size-range');
     const n = document.getElementById('spf-size');
     if (r && n) n.value = r.value;
+    refreshTypePreview();
   }
   function syncSizeFromNumber() {
     const n = document.getElementById('spf-size');
@@ -1299,6 +1336,7 @@ export const WorldMap = (() => {
     if (v < PIN_SIZE_MIN) v = PIN_SIZE_MIN;
     if (v > PIN_SIZE_MAX) v = PIN_SIZE_MAX;
     r.value = v;
+    refreshTypePreview();
   }
 
   function openPinPanel(pinId) { _openPinPanel(pinId); }
