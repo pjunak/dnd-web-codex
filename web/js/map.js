@@ -304,6 +304,16 @@ export const WorldMap = (() => {
     if (Number.isFinite(maxZ) && target > maxZ) target = maxZ;
     _map.setZoom(target);
   }
+  // Step the zoom by `dir` Leaflet zoom units (typically ±1) — used
+  // by the +/- buttons in the floating zoom panel. Honours zoomSnap
+  // so the result lands on a clean step.
+  function zoomStep(dir) {
+    if (!_map) return;
+    const z = _map.getZoom();
+    const step = (typeof _map.options.zoomDelta === 'number' && _map.options.zoomDelta > 0)
+      ? _map.options.zoomDelta : 1;
+    _map.setZoom(z + (dir > 0 ? step : -step));
+  }
   // Public — Settings calls this after the GM tweaks the
   // zoom-scale slider so the live map rescales markers without
   // waiting for the next zoom event. No-op when the live map is
@@ -523,20 +533,29 @@ export const WorldMap = (() => {
             ${_presetButtonsHtml()}
             <button class="sc-btn edit-only-inline"${dataAction('WorldMap.captureCurrentView')} title="Uložit aktuální pohled jako předvolbu">✚ Uložit pohled</button>
           </span>
-          <span class="sc-zoom-slider" id="sc-zoom-slider-wrap" title="Plynulý zoom — 1.0× = originální rozlišení obrázku">
-            <button class="sc-btn sc-zoom-reset"${dataAction('WorldMap.zoomReset')} title="Resetovat zoom na 1.0× (skutečné rozlišení)">1×</button>
-            <input type="range" id="sc-zoom-slider"
-              min="-8" max="2" step="0.25" value="0"
-              ${dataOn('input', 'WorldMap.zoomSliderInput', '$value')}>
-            <output id="sc-zoom-readout">1.00×</output>
-          </span>
           <button class="sc-btn edit-only-inline"${dataAction('WorldMap.showSettings')}>⚙ Mapa</button>
           <span class="sc-hint">${_addMode
             ? 'Klikni na mapu pro přidání nového místa'
             : 'Klik = detail místa · Kolečko = zoom · Táhni = pohyb'
           }</span>
         </div>
-        <div id="sc-map-container"></div>
+        <div id="sc-map-container">
+          <!-- Floating zoom panel (top-left). Replaces Leaflet's default
+               +/- control plus the toolbar slider that was there before.
+               Vertical slider so the +/− anchors line up naturally with
+               zoom-in (top) and zoom-out (bottom). -->
+          <div class="sc-zoom-panel" id="sc-zoom-panel" title="Zoom — 1.0× = skutečné rozlišení">
+            <button class="sc-zoom-step" type="button"${dataAction('WorldMap.zoomStep', 1)} title="Přiblížit">+</button>
+            <input type="range" id="sc-zoom-slider"
+              class="sc-zoom-slider-vertical"
+              orient="vertical"
+              min="-8" max="2" step="0.25" value="0"
+              ${dataOn('input', 'WorldMap.zoomSliderInput', '$value')}>
+            <button class="sc-zoom-step" type="button"${dataAction('WorldMap.zoomStep', -1)} title="Oddálit">−</button>
+            <button class="sc-zoom-reset" type="button"${dataAction('WorldMap.zoomReset')} title="Resetovat zoom na 1.0× (skutečné rozlišení)">1×</button>
+            <output id="sc-zoom-readout">1.00×</output>
+          </div>
+        </div>
         <div class="sc-legend" id="sc-legend"></div>
       </div>
 
@@ -629,6 +648,9 @@ export const WorldMap = (() => {
       zoomDelta:           0.5,
       wheelPxPerZoomLevel: 120,
       attributionControl:  false,
+      // Leaflet's default +/- zoom control would duplicate our custom
+      // vertical slider in the floating top-left zoom panel.
+      zoomControl:         false,
     });
 
     L.tileLayer(
@@ -674,6 +696,9 @@ export const WorldMap = (() => {
       zoomDelta:           0.5,
       wheelPxPerZoomLevel: 120,
       attributionControl:  false,
+      // Leaflet's default +/- zoom control would duplicate our custom
+      // vertical slider in the floating top-left zoom panel.
+      zoomControl:         false,
     });
 
     L.imageOverlay(imgUrl, _bounds).addTo(_map);
@@ -1726,6 +1751,6 @@ export const WorldMap = (() => {
     startPlacingEventPin, clearEventPin, showEventPin,
     bundledDefaultUrl,
     resolveIconForLocation,
-    zoomSliderInput, zoomReset, applyZoomScaleRatio,
+    zoomSliderInput, zoomReset, zoomStep, applyZoomScaleRatio,
   };
 })();

@@ -207,8 +207,12 @@
   gap: 0.75rem;
   margin-bottom: 0.75rem;
 }
-.sc-pin-icon { font-size: 1.6rem; line-height: 1; }
-img.sc-pin-icon {
+.sc-pin-header .sc-pin-icon { font-size: 1.6rem; line-height: 1; }
+/* Side-panel header SVG preview — fixed size next to the pin name. The
+   `.sc-pin-header` scope is critical: an unscoped `img.sc-pin-icon`
+   rule matches the map markers too (they reuse the class) and forces
+   every marker to the same pixel size, defeating per-pin sizing. */
+.sc-pin-header img.sc-pin-icon {
   width: 28px;
   height: 28px;
   object-fit: contain;
@@ -332,32 +336,77 @@ img.sc-pin-icon {
   border-left: 1px solid rgba(212,184,122,0.18);
 }
 
-/* ── Continuous zoom slider + 1× reset + readout ─────────────── */
-.sc-zoom-slider {
+/* ── Floating zoom panel (top-left over the map) ───────────────
+   Replaces both Leaflet's default +/- zoom control and the legacy
+   horizontal slider that lived in the toolbar. Vertical so + sits
+   above − naturally; readout + 1× reset stack underneath. */
+.sc-zoom-panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 500;            /* above tiles + markers, below side panels */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.4rem 0.4rem;
+  background: rgba(18,14,10,0.88);
+  border: 1px solid rgba(212,184,122,0.22);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  user-select: none;
+}
+.sc-zoom-step {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  border: 1px solid rgba(212,184,122,0.25);
+  background: var(--bg-raised);
+  color: var(--text-parchment);
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  margin-left: 0.4rem;
-  padding-left: 0.6rem;
-  border-left: 1px solid rgba(212,184,122,0.18);
+  justify-content: center;
+  padding: 0;
+  font-family: var(--font-ui);
 }
-.sc-zoom-slider input[type="range"] {
-  width: 110px;
+.sc-zoom-step:hover  { background: rgba(212,184,122,0.18); }
+.sc-zoom-step:active { background: rgba(212,184,122,0.32); }
+/* Vertical slider: standard `orient="vertical"` works in Firefox;
+   Chrome/Edge need a CSS rotate fallback. The wrapper height drives
+   the visible track length. */
+.sc-zoom-slider-vertical {
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  width: 24px;
+  height: 140px;
   accent-color: var(--accent-gold);
   cursor: pointer;
+  margin: 2px 0;
 }
-.sc-zoom-slider output {
-  font-family: var(--font-ui);
+.sc-zoom-panel .sc-zoom-reset {
+  width: 32px;
+  height: 24px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid rgba(212,184,122,0.25);
+  background: var(--bg-raised);
+  color: var(--text-parchment);
   font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  font-family: var(--font-ui);
+}
+.sc-zoom-panel .sc-zoom-reset:hover { background: rgba(212,184,122,0.18); }
+.sc-zoom-panel output {
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
-  min-width: 3.4rem;
-  text-align: right;
-}
-.sc-zoom-reset {
-  /* Same .sc-btn styling, just slightly tighter for the toolbar. */
-  padding: 0.25rem 0.5rem;
-  font-variant-numeric: tabular-nums;
+  text-align: center;
+  min-width: 3rem;
 }
 
 /* ── Pin priority radio row in edit form ─────────────────────── */
