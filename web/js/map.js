@@ -265,6 +265,31 @@ export const WorldMap = (() => {
       if (pin) pin.style.setProperty('--sc-pin-base-scale', value);
     }
   }
+  // Walk every marker's `.sc-pin` element and apply (or clear) an
+  // inline `transition` value. Used by the zoomanim/zoomend pair to
+  // tween marker scale in lock-step with Leaflet's pane animation.
+  // Empty value falls back to the CSS rule (0.15s, used by hover).
+  function _setMarkerTransition(value) {
+    for (const m of Object.values(_markers)) {
+      const el  = m.getElement && m.getElement();
+      const pin = el && el.querySelector ? el.querySelector('.sc-pin') : null;
+      if (pin) pin.style.transition = value || '';
+    }
+  }
+  // Counter-scale value applied to `--sc-pin-base-scale` during a
+  // Leaflet animated zoom. Derivation: Leaflet's pane CSS transform
+  // grows from 1 to 2^(z1-z0) during the animation. Visible size of
+  // a marker at any moment is `pane(t) * S(t)`, and we want it to
+  // equal `2^(r * z(t))` where `r = zoomScaleRatio`. Setting S to
+  // its end-of-animation value gives correct start/end values; the
+  // CSS transition (with the same duration + easing as Leaflet's)
+  // tweens through the middle. Linear interpolation in CSS transform
+  // space introduces a small mid-animation discrepancy (~12% bulge
+  // for r=0 on a 1-step zoom), but it's transient (0.125 s) and
+  // dramatically less jarring than the prior "balloon-then-snap".
+  function _animScaleEnd(z0, z1, r) {
+    return Math.pow(2, (r - 1) * z1 + z0);
+  }
   // Suppresses the slider write-back inside `_updateZoomReadout`
   // while the user is actively dragging the thumb. Without this
   // guard, a `zoomend` from an in-flight `setZoom` call can fire
@@ -778,10 +803,39 @@ export const WorldMap = (() => {
     _applyMarkerScale();
     _updateZoomReadout();
 
+    // zoomanim fires only for animated zooms (wheel, double-click, +/−
+    // buttons via Leaflet shortcut). Slider drags use {animate:false}
+    // and skip this entirely, so they keep snapping instantly.
+    _map.on('zoomanim', (e) => {
+      const r  = _currentZoomScaleRatio();
+      const z0 = _map.getZoom();
+      const z1 = e.zoom;
+      const sEnd = _animScaleEnd(z0, z1, r).toFixed(3);
+      // Match Leaflet's pane animation duration (0.25s) and easing
+      // (cubic-bezier(0,0,0.25,1)) so our marker scale transitions
+      // in lock-step. The pane scale and marker scale multiply each
+      // frame, keeping the visible marker size approximately constant
+      // (or growing per `r`) instead of ballooning then snapping.
+      _setMarkerTransition('transform 0.25s cubic-bezier(0,0,0.25,1)');
+      for (const m of Object.values(_markers)) {
+        const el  = m.getElement && m.getElement();
+        const pin = el && el.querySelector ? el.querySelector('.sc-pin') : null;
+        if (pin) pin.style.setProperty('--sc-pin-base-scale', sEnd);
+      }
+    });
     _map.on('zoomend', () => {
+      // Disable transition so the snap to the final scale is instant
+      // — matches Leaflet's instant pane reset at zoomend. Otherwise
+      // _applyMarkerScale's write would tween over 0.25s after the
+      // pane has already reset, reproducing the old "lag" bug.
+      _setMarkerTransition('none');
       _renderLegend();
       _applyMarkerScale();
       _updateZoomReadout();
+      // Restore the CSS-rule transition (0.15s, used for hover-pop)
+      // on the next frame so the inline `none` override doesn't kill
+      // the smooth hover animation.
+      requestAnimationFrame(() => _setMarkerTransition(''));
     });
 
     _map.on('click', evt => {
