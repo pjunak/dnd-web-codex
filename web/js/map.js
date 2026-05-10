@@ -265,16 +265,31 @@ export const WorldMap = (() => {
       if (pin) pin.style.setProperty('--sc-pin-base-scale', value);
     }
   }
+  // Suppresses the slider write-back inside `_updateZoomReadout`
+  // while the user is actively dragging the thumb. Without this
+  // guard, a `zoomend` from an in-flight `setZoom` call can fire
+  // mid-drag, write a stale zoom level into `slider.value`, and
+  // make the thumb visually jump backward. Set on pointerdown
+  // (see `_wirePostInit`), cleared on pointerup.
+  let _sliderInteracting = false;
+  function _formatZoom(z) {
+    // Drop the trailing `×` — the small button (36–40 px wide) can't
+    // fit "16.00×". The numeric value alone reads unambiguously as
+    // a zoom factor in context.
+    return Math.pow(2, z).toFixed(2);
+  }
   function _updateZoomReadout() {
     const slider = document.getElementById('sc-zoom-slider');
-    // Readout is now the `1×`-reset button itself — clicking it resets,
-    // and the label always reflects the live zoom value.
+    // Readout is the bottom button itself — clicking resets, label
+    // tracks the live zoom value.
     const out    = document.getElementById('sc-zoom-readout');
     if (!_map) return;
     const z = _map.getZoom();
-    const display = Math.pow(2, z);
-    if (slider) slider.value = String(z);
-    if (out)    out.textContent = `${display.toFixed(2)}×`;
+    // Only sync the slider position when the user isn't currently
+    // dragging it. Otherwise an async zoomend can race with the
+    // drag and force the thumb backward.
+    if (slider && !_sliderInteracting) slider.value = String(z);
+    if (out)    out.textContent = _formatZoom(z);
   }
   function _syncZoomSliderBounds() {
     const slider = document.getElementById('sc-zoom-slider');
@@ -288,12 +303,16 @@ export const WorldMap = (() => {
     if (!_map) return;
     const z = parseFloat(value);
     if (!isFinite(z)) return;
-    _map.setZoom(z);
-    // setZoom fires zoomend asynchronously which updates the readout,
-    // but the user expects the live value to track the slider drag —
-    // update the readout eagerly so it doesn't lag.
+    // `animate: false` snaps instantly so back-to-back drag inputs
+    // can't queue overlapping zoom animations whose `zoomend` events
+    // race with subsequent drags. Combined with `_sliderInteracting`,
+    // the slider stays in lock-step with the user's gesture.
+    _map.setZoom(z, { animate: false });
+    // Eager readout update — `zoomend` would fire next tick and
+    // refresh this anyway, but the user expects the value to track
+    // the slider drag without a frame of lag.
     const out = document.getElementById('sc-zoom-readout');
-    if (out) out.textContent = `${Math.pow(2, z).toFixed(2)}×`;
+    if (out) out.textContent = _formatZoom(z);
   }
   function zoomReset() {
     if (!_map) return;
@@ -737,6 +756,22 @@ export const WorldMap = (() => {
     if (zoomPanel && L && L.DomEvent) {
       L.DomEvent.disableClickPropagation(zoomPanel);
       L.DomEvent.disableScrollPropagation(zoomPanel);
+    }
+    // Track the slider's drag gesture so async zoomend events don't
+    // overwrite `slider.value` mid-drag (which would make the thumb
+    // visually jump backward). Pointer events cover mouse + touch +
+    // pen in one listener; `pointercancel` handles tablet flicks.
+    const zoomSlider = document.getElementById('sc-zoom-slider');
+    if (zoomSlider) {
+      const onDown = () => { _sliderInteracting = true; };
+      const onUp   = () => { _sliderInteracting = false; };
+      zoomSlider.addEventListener('pointerdown',   onDown);
+      zoomSlider.addEventListener('pointerup',     onUp);
+      zoomSlider.addEventListener('pointercancel', onUp);
+      // Defensive: a focused slider that loses focus mid-drag (e.g. a
+      // modal opens) should release the lock so the readout sync
+      // resumes on the next zoomend.
+      zoomSlider.addEventListener('blur',          onUp);
     }
 
     _syncZoomSliderBounds();
