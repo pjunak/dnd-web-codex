@@ -253,6 +253,8 @@ document.addEventListener('error',    (ev) => {
       let active = r === route || r === "/" + route.split("/")[1] || route.startsWith(r + "/");
       // Highlight Myšlenkový Palác for all mind-map sub-routes
       if (r === "/mapa/palac" && PALAC_ROUTES.has(route)) active = true;
+      // Local sub-maps share the world-map sidebar entry.
+      if (r === "/mapa/svet" && route.startsWith("/mapa/local/")) active = true;
       el.classList.toggle("active", active);
     });
 
@@ -282,7 +284,15 @@ document.addEventListener('error',    (ev) => {
     // Maps — full-screen layout
     if (section === "mapa") {
       if (sub === "svet") {
-        WorldMap.render();
+        WorldMap.render(null);
+      } else if (sub === "local") {
+        // Local sub-map of a Location. Third path component is the
+        // location id. Encoding it in the URL means an edit-mode
+        // toggle (which dispatches a synthetic hashchange) preserves
+        // the map context instead of dumping the user back to world.
+        let locId = parts[2] || '';
+        try { locId = decodeURIComponent(locId); } catch {}
+        WorldMap.render(locId || null);
       } else if (sub === "palac" || sub === "frakce" || sub === "vztahy" || sub === "tajemstvi") {
         CloudMap.render(sub === "palac" ? "frakce" : sub);
       } else {

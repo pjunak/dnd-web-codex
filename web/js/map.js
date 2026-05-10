@@ -485,7 +485,14 @@ export const WorldMap = (() => {
 
   function render(parentId) {
     // Switching map context. parentId=null → world map; otherwise a
-    // location whose `localMap` image is the backdrop.
+    // location whose `localMap` image is the backdrop. Defensive
+    // fallback: if the URL points at a deleted/unmappable location,
+    // drop back to the world map silently rather than rendering a
+    // broken backdrop.
+    if (parentId) {
+      const p = Store.getLocation(parentId);
+      if (!p || !p.localMap) parentId = null;
+    }
     _currentParentId = parentId || null;
     const parent = _currentParentId ? Store.getLocation(_currentParentId) : null;
     const titleHtml = parent
@@ -1057,8 +1064,12 @@ export const WorldMap = (() => {
       const pct = strength === 1.0 ? '' : ` ${Math.round(strength * 100)}%`;
       return `<span style="color:${s.labelColor}">${esc(s.label)}${esc(pct)}</span>`;
     }).filter(Boolean).join(', ');
+    const previewUrl = _resolveIconUrl(pin);
+    const previewHtml = previewUrl
+      ? `<img class="sc-pin-icon" src="${esc(previewUrl)}" alt="" draggable="false">`
+      : `<span class="sc-pin-icon">${pt.icon}</span>`;
     const headerInner = `
-      <span class="sc-pin-icon">${pt.icon}</span>
+      ${previewHtml}
       <div>
         <div class="sc-pin-name">${esc(pin.name)}</div>
         <div class="sc-pin-meta">${pt.label}${attLabels ? ' · ' + attLabels : ''}</div>
@@ -1087,6 +1098,14 @@ export const WorldMap = (() => {
     _editPinId = pin.id || null;
     const typeOpts = Object.entries(PIN_TYPES)
       .map(([k, v]) => `<option value="${k}" ${pin.type===k?'selected':''}>${v.icon} ${v.label}</option>`).join('');
+    // Live SVG preview of the resolved marker artwork — what the pin
+    // will actually look like on the map. The native <select> below
+    // can only render emoji glyphs in <option>s, so this companion
+    // image gives the GM the real preview.
+    const previewUrl = _resolveIconUrl(pin);
+    const previewHtml = previewUrl
+      ? `<img id="spf-type-preview" class="spf-type-preview" src="${esc(previewUrl)}" alt="" draggable="false">`
+      : `<span id="spf-type-preview" class="spf-type-preview spf-type-preview-emoji">${(PIN_TYPES[pin.type]||PIN_TYPES.custom).icon}</span>`;
     // Pin form exposes the full attitudes array (with per-attitude
     // strength sliders) so multi-stance places can be edited from the
     // map without switching to the wiki editor. Same chip-row helper
@@ -1122,7 +1141,11 @@ export const WorldMap = (() => {
         <label class="sc-label">Název *</label>
         <input class="sc-input" id="spf-name" type="text" value="${esc(pin.name||'')}" placeholder="Waterdeep...">
         <label class="sc-label">Typ</label>
-        <select class="sc-input" id="spf-type">${typeOpts}</select>
+        <div class="spf-type-row">
+          ${previewHtml}
+          <select class="sc-input" id="spf-type"
+            ${dataOn('change', 'WorldMap.refreshTypePreview')}>${typeOpts}</select>
+        </div>
         <label class="sc-label">Postoje k partě <span class="sc-hint">(víc postojů s nastavitelnou silou)</span></label>
         ${attChipRowHtml}
         <label class="sc-label">Velikost značky <span class="sc-hint">${inheritsSize ? '(výchozí podle typu)' : '(vlastní)'}</span></label>
@@ -1196,6 +1219,43 @@ export const WorldMap = (() => {
     Store.saveLocation(loc);
     _refreshPin(loc.id);
     _openPinPanel(loc.id);
+  }
+
+  // Re-render the SVG/emoji preview block in the pin form when the
+  // user changes the Type dropdown. The form is otherwise static, so
+  // we patch the preview node in place rather than rebuilding the
+  // whole form.
+  function refreshTypePreview() {
+    const sel = document.getElementById('spf-type');
+    const cur = document.getElementById('spf-type-preview');
+    if (!sel || !cur) return;
+    const type = sel.value || 'custom';
+    // Synthetic pin shape: id taken from the live editor target so
+    // `random` strategy stays deterministic across retypes; status
+    // pulled from the location for `state` strategy.
+    const loc = _editPinId ? Store.getLocation(_editPinId) : null;
+    const synth = {
+      id:         _editPinId || '',
+      locationId: _editPinId || '',
+      type,
+      locationStatus: loc?.status || '',
+    };
+    const url = _resolveIconUrl(synth);
+    let next;
+    if (url) {
+      next = document.createElement('img');
+      next.id = 'spf-type-preview';
+      next.className = 'spf-type-preview';
+      next.src = url;
+      next.alt = '';
+      next.draggable = false;
+    } else {
+      next = document.createElement('span');
+      next.id = 'spf-type-preview';
+      next.className = 'spf-type-preview spf-type-preview-emoji';
+      next.textContent = (PIN_TYPES[type] || PIN_TYPES.custom).icon;
+    }
+    cur.replaceWith(next);
   }
 
   // Slider ↔ number-input mirrors for the pin form's size control.
@@ -1364,12 +1424,15 @@ export const WorldMap = (() => {
     const targetParent = ev.mapParentId || null;
     const alreadyOnMap = _isOnMapRoute() && !!_map && targetParent === _currentParentId;
     if (alreadyOnMap) { _armForCurrentTarget(); return; }
-    if (!_isOnMapRoute()) window.location.hash = '#/mapa/svet';
+    const targetHash = _hashForParent(targetParent);
+    const sameHash   = window.location.hash === targetHash;
+    if (!sameHash) window.location.hash = targetHash;
     // Defer until the route change (and any parent-map render) finishes.
     // _doInit will call _armForCurrentTarget once the map is ready, so the
     // intent survives SSE-driven re-renders that may happen concurrently.
     setTimeout(() => {
       if (targetParent && targetParent !== _currentParentId) render(targetParent);
+      else if (sameHash && !_map) render(targetParent);
       else if (!_map) _initLeaflet();
       else _armForCurrentTarget();
     }, 0);
@@ -1393,9 +1456,12 @@ export const WorldMap = (() => {
     };
     const alreadyOnMap = _isOnMapRoute() && !!_map && targetParent === _currentParentId;
     if (alreadyOnMap) { fly(); return; }
-    if (!_isOnMapRoute()) window.location.hash = '#/mapa/svet';
+    const targetHash = _hashForParent(targetParent);
+    const sameHash   = window.location.hash === targetHash;
+    if (!sameHash) window.location.hash = targetHash;
     setTimeout(() => {
-      if (targetParent) render(targetParent);
+      if (targetParent && targetParent !== _currentParentId) render(targetParent);
+      else if (sameHash && !_map) render(targetParent);
       setTimeout(fly, 120);
     }, 0);
   }
@@ -1421,12 +1487,15 @@ export const WorldMap = (() => {
     _placeForLocId = locId;
     const alreadyOnMap = _isOnMapRoute() && !!_map && targetParent === _currentParentId;
     if (alreadyOnMap) { _armForCurrentTarget(); return; }
-    if (!_isOnMapRoute()) window.location.hash = '#/mapa/svet';
+    const targetHash = _hashForParent(targetParent);
+    const sameHash   = window.location.hash === targetHash;
+    if (!sameHash) window.location.hash = targetHash;
     // Defer until the route change (and any parent-map render) finishes.
     // _doInit will call _armForCurrentTarget once the map is ready, so the
     // intent survives SSE-driven re-renders that may happen concurrently.
     setTimeout(() => {
       if (targetParent && targetParent !== _currentParentId) render(targetParent);
+      else if (sameHash && !_map) render(targetParent);
       else if (!_map) _initLeaflet();
       else _armForCurrentTarget();
     }, 0);
@@ -1527,8 +1596,12 @@ export const WorldMap = (() => {
     if (!hits.length) { el.innerHTML = ''; _hideSearchResults(); return; }
     el.innerHTML = hits.map(p => {
       const pt = PIN_TYPES[p.type] || PIN_TYPES.custom;
+      const url = _resolveIconUrl(p);
+      const ico = url
+        ? `<img class="sc-search-ico" src="${esc(url)}" alt="" draggable="false">`
+        : `<span class="sc-search-ico">${pt.icon}</span>`;
       return `<div class="sc-search-item"${dataAction('WorldMap.zoomToPin', p.id)}>
-        <span class="sc-search-ico">${pt.icon}</span>
+        ${ico}
         <span class="sc-search-name">${esc(p.name)}</span>
         <span class="sc-search-sub">${esc(pt.label)}</span>
       </div>`;
@@ -1583,7 +1656,19 @@ export const WorldMap = (() => {
   // gate their fast-paths on this so they don't try to fly /
   // arm a stale, detached Leaflet instance.
   function _isOnMapRoute() {
-    return window.location.hash === '#/mapa/svet';
+    const h = window.location.hash || '';
+    return h === '#/mapa/svet' || h.startsWith('#/mapa/local/');
+  }
+
+  // Hash for a given map context. World map is `#/mapa/svet`; a
+  // sub-map is `#/mapa/local/<locId>`. Encoding the parent id in the
+  // URL means edit-mode toggles (which dispatch synthetic hashchange)
+  // re-render the same context instead of dumping the user back to
+  // the world map.
+  function _hashForParent(parentId) {
+    return parentId
+      ? '#/mapa/local/' + encodeURIComponent(parentId)
+      : '#/mapa/svet';
   }
 
   // Public entry point used from wiki pages. Navigates into the correct
@@ -1597,14 +1682,15 @@ export const WorldMap = (() => {
     const alreadyOnMap = _isOnMapRoute() && !!_map && targetParent === _currentParentId;
     if (alreadyOnMap) { zoomToPin(pinId); return; }
     _pendingPinId = pinId;
-    if (!_isOnMapRoute()) {
-      // Hash change triggers app.js navigate() → WorldMap.render() →
-      // _wirePostInit, which consumes `_pendingPinId` once the map
-      // is ready. For sub-map pins we additionally call render() in
-      // a microtask to switch context after the world-map mount.
-      window.location.hash = '#/mapa/svet';
+    // Encode the target context in the URL so app.js navigates straight
+    // into the right map; render() fires from the hashchange. If we're
+    // already at the target hash (no event will fire), render directly.
+    const targetHash = _hashForParent(targetParent);
+    if (window.location.hash !== targetHash) {
+      window.location.hash = targetHash;
+    } else {
+      setTimeout(() => render(targetParent), 0);
     }
-    if (targetParent) setTimeout(() => render(targetParent), 0);
   }
 
   // Switch the map view to a parent location's local map (parent.localMap
@@ -1616,7 +1702,14 @@ export const WorldMap = (() => {
       return;
     }
     closePanel();
-    render(parentId);
+    // Drive the context via hash so an edit-mode toggle (synthetic
+    // hashchange) re-renders the same sub-map instead of resetting.
+    const newHash = _hashForParent(parentId);
+    if (window.location.hash !== newHash) {
+      window.location.hash = newHash;
+    } else {
+      render(parentId);
+    }
   }
 
   return {
@@ -1624,7 +1717,7 @@ export const WorldMap = (() => {
     toggleAddMode, closePanel,
     toggleEventPaths,
     openPinPanel, savePin, deletePin,
-    syncSizeFromRange, syncSizeFromNumber,
+    syncSizeFromRange, syncSizeFromNumber, refreshTypePreview,
     showSettings, closeSettings, applySettings, handleMapFileUpload,
     zoomFitAll,
     applyMapView, captureCurrentView, refreshPresetButtons: _refreshPresetButtons,

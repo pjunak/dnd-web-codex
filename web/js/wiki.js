@@ -1092,8 +1092,12 @@ export const Wiki = (() => {
       );
     }
     if (l.localMap) {
+      // Direct hash navigation — `#/mapa/local/<id>` routes via app.js
+      // straight to WorldMap.render(parentId), so no deferred action
+      // needed. Encoding parentId in the URL also keeps an edit-mode
+      // toggle (synthetic hashchange) on the same sub-map.
       mapButtons.push(
-        `<a class="inline-create-btn" href="#/mapa/svet"${dataAction('deferred', 'WorldMap.openLocalMap', l.id)}>🗺 Otevřít místní mapu</a>`
+        `<a class="inline-create-btn" href="#/mapa/local/${encodeURIComponent(l.id)}">🗺 Otevřít místní mapu</a>`
       );
     }
     const mapRow = mapButtons.length
