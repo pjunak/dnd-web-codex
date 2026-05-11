@@ -1231,10 +1231,43 @@ export const WorldMap = (() => {
     document.getElementById('sc-panel').removeAttribute('hidden');
   }
 
+  // Resolve the representative icon URL for the type-picker menu. Uses
+  // the default-slot file or first uploaded file when a pin type has
+  // an iconConfig; otherwise falls through to the bundled game-icons
+  // default. Skips the random/state strategy logic since the menu
+  // wants ONE consistent icon per type, not a per-pin sample.
+  function _typeMenuIconUrl(typeId) {
+    const types  = (Store.getEnum && Store.getEnum('pinTypes')) || [];
+    const cfg    = types.find(t => t.id === typeId)?.iconConfig;
+    if (cfg && Array.isArray(cfg.files) && cfg.files.length) {
+      const f = cfg.files.find(x => x.stateId == null) || cfg.files[0];
+      if (f && f.url) return f.url;
+    }
+    return _bundledDefaultUrl(typeId);
+  }
   function _renderPinForm(pin, isNew) {
     _editPinId = pin.id || null;
-    const typeOpts = Object.entries(PIN_TYPES)
-      .map(([k, v]) => `<option value="${k}" ${pin.type===k?'selected':''}>${v.icon} ${v.label}</option>`).join('');
+    const currentType = pin.type || 'custom';
+    // Custom dropdown — the native <select> can only render emoji
+    // in <option>s, but we want SVG icons throughout. A hidden
+    // `#spf-type` input preserves the existing save/read contract;
+    // a styled button trigger + click-to-open menu replaces the
+    // native picker. Each menu row is a button so the action
+    // dispatcher routes selection through `WorldMap.selectPinType`.
+    const typeMenuItems = Object.entries(PIN_TYPES).map(([k, v]) => {
+      const url = _typeMenuIconUrl(k);
+      const iconHtml = url
+        ? `<img class="spf-type-menu-icon" src="${esc(url)}" alt="" draggable="false">`
+        : `<span class="spf-type-menu-icon spf-type-menu-icon-emoji">${v.icon}</span>`;
+      const activeCls = (k === currentType) ? ' is-active' : '';
+      return `<button type="button" class="spf-type-menu-item${activeCls}"
+        data-spf-type="${esc(k)}"
+        ${dataAction('WorldMap.selectPinType', k)}>
+        ${iconHtml}
+        <span class="spf-type-menu-label">${esc(v.label)}</span>
+      </button>`;
+    }).join('');
+    const currentLabel = (PIN_TYPES[currentType] || PIN_TYPES.custom).label;
     // Live SVG preview of the resolved marker artwork — what the pin
     // will actually look like on the map. The native <select> below
     // can only render emoji glyphs in <option>s, so this companion
@@ -1284,8 +1317,22 @@ export const WorldMap = (() => {
         <label class="sc-label">Typ</label>
         <div class="spf-type-row">
           ${previewHtml}
-          <select class="sc-input" id="spf-type"
-            ${dataOn('change', 'WorldMap.refreshTypePreview')}>${typeOpts}</select>
+          <!-- Hidden input preserves the read contract: savePin and
+               refreshTypePreview both call `document.getElementById('spf-type').value`. -->
+          <input type="hidden" id="spf-type" value="${esc(currentType)}">
+          <div class="spf-type-picker">
+            <button type="button" class="sc-input spf-type-trigger"
+              id="spf-type-trigger"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              ${dataAction('WorldMap.toggleTypeMenu')}>
+              <span class="spf-type-trigger-label">${esc(currentLabel)}</span>
+              <span class="spf-type-trigger-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div class="spf-type-menu" id="spf-type-menu" role="listbox" hidden>
+              ${typeMenuItems}
+            </div>
+          </div>
         </div>
         <label class="sc-label">Postoje k partě <span class="sc-hint">(víc postojů s nastavitelnou silou)</span></label>
         ${attChipRowHtml}
@@ -1309,6 +1356,76 @@ export const WorldMap = (() => {
     document.getElementById('sc-panel').removeAttribute('hidden');
     Widgets.mountAll(document.getElementById('sc-panel-content'));
   }
+
+  // ── Custom pin-type dropdown ─────────────────────────────────────
+  // The native <select> can only render emoji glyphs in <option>s,
+  // so we built a custom dropdown that uses the same SVG resolver
+  // as the marker preview. State is minimal: the menu is either
+  // open or closed; closing happens on selection, Esc, or click
+  // outside the picker.
+  function toggleTypeMenu() {
+    const menu    = document.getElementById('spf-type-menu');
+    const trigger = document.getElementById('spf-type-trigger');
+    if (!menu || !trigger) return;
+    const willOpen = menu.hasAttribute('hidden');
+    if (willOpen) {
+      menu.removeAttribute('hidden');
+      trigger.setAttribute('aria-expanded', 'true');
+      // Scroll the active item into view so the GM doesn't have to
+      // search through 28 entries.
+      const active = menu.querySelector('.spf-type-menu-item.is-active');
+      if (active && typeof active.scrollIntoView === 'function') {
+        active.scrollIntoView({ block: 'nearest' });
+      }
+    } else {
+      closeTypeMenu();
+    }
+  }
+  function closeTypeMenu() {
+    const menu    = document.getElementById('spf-type-menu');
+    const trigger = document.getElementById('spf-type-trigger');
+    if (menu)    menu.setAttribute('hidden', '');
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  }
+  // Pick a pin type from the custom dropdown. Updates the hidden
+  // input (so save/read code is unchanged), refreshes the trigger
+  // label + active highlight, closes the menu, and refreshes the
+  // big SVG preview block.
+  function selectPinType(typeId) {
+    const hidden  = document.getElementById('spf-type');
+    const trigger = document.getElementById('spf-type-trigger');
+    const menu    = document.getElementById('spf-type-menu');
+    if (!hidden || !trigger || !menu) return;
+    hidden.value = typeId;
+    const label = (PIN_TYPES[typeId] || PIN_TYPES.custom).label;
+    const labelSpan = trigger.querySelector('.spf-type-trigger-label');
+    if (labelSpan) labelSpan.textContent = label;
+    // Move the .is-active highlight to the freshly-picked row so a
+    // re-open shows the right selection state without a full re-render.
+    menu.querySelectorAll('.spf-type-menu-item.is-active').forEach(el =>
+      el.classList.remove('is-active')
+    );
+    const next = menu.querySelector(`.spf-type-menu-item[data-spf-type="${typeId}"]`);
+    if (next) next.classList.add('is-active');
+    closeTypeMenu();
+    refreshTypePreview();
+  }
+  // Close the custom dropdown when the user clicks outside it. One
+  // document-level listener wired at module init; safely no-ops when
+  // the menu isn't currently open / mounted.
+  document.addEventListener('click', (ev) => {
+    const menu = document.getElementById('spf-type-menu');
+    if (!menu || menu.hasAttribute('hidden')) return;
+    const picker = ev.target.closest && ev.target.closest('.spf-type-picker');
+    if (!picker) closeTypeMenu();
+  }, true);
+  // Esc also closes — independent of focus, since the menu items
+  // don't necessarily own the focus.
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    const menu = document.getElementById('spf-type-menu');
+    if (menu && !menu.hasAttribute('hidden')) closeTypeMenu();
+  });
 
   // Save form values onto a Location: either the linked existing one,
   // the location currently being edited, or a freshly-created place.
@@ -1884,6 +2001,7 @@ export const WorldMap = (() => {
     toggleEventPaths,
     openPinPanel, savePin, deletePin,
     syncSizeFromRange, syncSizeFromNumber, refreshTypePreview,
+    toggleTypeMenu, closeTypeMenu, selectPinType,
     showSettings, closeSettings, applySettings, handleMapFileUpload,
     zoomFitAll,
     applyMapView, captureCurrentView, refreshPresetButtons: _refreshPresetButtons,

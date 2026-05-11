@@ -317,6 +317,107 @@ img.spf-type-preview {
   filter: none;
 }
 
+/* Custom pin-type dropdown — replaces the native <select> so the
+   menu items can render the actual SVG icons instead of emoji
+   placeholders (native <option> elements can't host <img>). */
+.spf-type-picker {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.spf-type-trigger {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-family: inherit;
+}
+.spf-type-trigger-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.spf-type-trigger-chevron {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  transition: transform 0.15s;
+}
+.spf-type-trigger[aria-expanded="true"] .spf-type-trigger-chevron {
+  transform: rotate(180deg);
+}
+/* Menu pops below the trigger, scrolls if all 28 PIN_TYPES exceed
+   the cap. Absolute positioning keeps it from re-flowing the form
+   when it opens. */
+.spf-type-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  max-height: 320px;
+  overflow-y: auto;
+  background: rgba(18,14,10,0.96);
+  border: 1px solid rgba(212,184,122,0.3);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+  padding: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.spf-type-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-parchment);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+.spf-type-menu-item:hover,
+.spf-type-menu-item:focus-visible {
+  background: rgba(212,184,122,0.16);
+  outline: none;
+}
+.spf-type-menu-item.is-active {
+  background: rgba(212,184,122,0.25);
+}
+.spf-type-menu-icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  /* Same stacked-shadow legibility outline used on the preview block
+     and side-panel header so the (mostly white) SVGs read on the
+     dark menu background. */
+  filter: drop-shadow(0 0 1px rgba(0,0,0,0.95)) drop-shadow(0 0 1px rgba(0,0,0,0.95));
+}
+.spf-type-menu-icon-emoji {
+  font-size: 1.1rem;
+  line-height: 1;
+  filter: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.spf-type-menu-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Legend — sibling of #sc-map-container inside .sc-shell.
    sc-map-container has z-index:0 creating its own stacking context,
    so this legend only needs to beat level 0. */
