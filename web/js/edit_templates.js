@@ -189,9 +189,9 @@ export const EditTemplates = (() => {
     const badge = factions[c.faction]?.badge || "👤";
 
     // Gender: dynamic list from user-editable settings + an "Ostatní
-    // (specifikuj)" reveal for one-off values. Back-compat: legacy
-    // records may hold a label ("Muž"/"Žena") — match both id and label
-    // when picking the currently-selected option.
+    // (specifikuj)" reveal for free-text values. Existing records may
+    // hold either an id or a label — match both when picking the
+    // currently-selected option so neither shape gets dropped on save.
     const genderList = Store.getEnum('genders');
     const currentGender = c.gender || '';
     const matchedGender = genderList.find(g => g.id === currentGender || g.label === currentGender);
@@ -350,8 +350,9 @@ export const EditTemplates = (() => {
       : `<div class="edit-hint">Uložte místo, pak přidejte přítomné postavy.</div>`;
 
     // Typ dropdown: PIN_TYPES entries with their icons, plus "custom"
-    // fallback. Current pinType wins; if only the legacy text `type` is
-    // set, try matching it to a PIN_TYPES label.
+    // fallback. The id-based `pinType` field wins; if a record only
+    // carries the human-readable `type` text, try to match it back to
+    // a PIN_TYPES label so the dropdown shows the right selection.
     let selectedPinType = l.pinType || '';
     if (!selectedPinType && l.type) {
       const match = Object.entries(PIN_TYPES).find(([, v]) => v.label === l.type);

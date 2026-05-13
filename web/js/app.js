@@ -80,6 +80,16 @@ const BUILTIN_ACTIONS = {
 //   `$checked` → el.checked (for checkbox / radio handlers)
 // Lets templates pass the element / event / value to handlers that
 // previously relied on inline `this` / `event` references.
+/**
+ * Resolve placeholder sentinels in a `data-args` array against the current
+ * element + event so handlers can receive live values (rather than the
+ * stringified snapshot stored at template time).
+ *
+ * @param {Array<*>} rawArgs - Args parsed out of the `data-args` JSON.
+ * @param {Element} el - The element carrying the `data-action` attribute.
+ * @param {Event} ev - The event that triggered dispatch.
+ * @returns {Array<*>} New args with sentinels replaced.
+ */
 function _resolveArgs(rawArgs, el, ev) {
   return rawArgs.map(a =>
     a === '$el'      ? el :
@@ -90,6 +100,15 @@ function _resolveArgs(rawArgs, el, ev) {
     a
   );
 }
+/**
+ * Look up and invoke an action by string name. Names of the form
+ * `Module.method` resolve against the `ACTIONS` registry; bare names
+ * resolve against `BUILTIN_ACTIONS`. Unknown names log a warning.
+ *
+ * @param {string} actionStr - Either `Module.method` or a built-in name.
+ * @param  {...*} args - Already-resolved args to forward to the handler.
+ * @returns {*} Whatever the handler returns.
+ */
 function _runAction(actionStr, ...args) {
   if (!actionStr) return;
   const dot = actionStr.indexOf('.');
@@ -222,10 +241,26 @@ document.addEventListener('error',    (ev) => {
   });
 
   // ── Router ──────────────────────────────────────────────────
+
+  /**
+   * Read the current route from `window.location.hash`. Returns `"/"` for
+   * the empty hash so callers can treat it as the dashboard route.
+   *
+   * @returns {string} The path component of the hash (no leading `#`).
+   */
   function getRoute() {
     return window.location.hash.replace(/^#/, "") || "/";
   }
 
+  /**
+   * Render the page for `route`. Dispatches to the right module
+   * (`Wiki`, `WorldMap`, `CloudMap`, `Timeline`, `Settings`), keeps the
+   * sidebar / bottom-nav active states in sync, mounts widgets and any
+   * EasyMDE textareas in the freshly-rendered subtree, and closes the
+   * mobile drawer if it was open. Called for hashchange and on boot.
+   *
+   * @param {string} route - The current hash route (from `getRoute()`).
+   */
   function navigate(route) {
     // Schedule widget mount after the page renders. Runs for every route so
     // any cb-mount/ms-mount placeholders in newly-rendered HTML get wired up.
@@ -354,19 +389,36 @@ document.addEventListener('error',    (ev) => {
     }
   }
 
-  // ── Collaborative sync via SSE (Phase 5.1) ──────────────────
-  // Subscribe to /api/events; server pushes 'data-changed' after every
-  // successful write. We refetch + re-render in <1s. No polling.
-  // If the user has unsaved edits in a form (`EditMode.isDirty()`) we
-  // defer the re-render and show a banner — re-rendering would replace
-  // the EasyMDE/CodeMirror DOM and silently destroy in-progress text.
-  // The banner clears automatically once the user saves (which fires
-  // `editmode:clean`) or they can dismiss/refresh on demand.
+  // ── Collaborative sync via SSE ──────────────────────────────
+  // Subscribe to /api/events; the server pushes a `data-changed` event
+  // after every successful write and the client refetches + re-renders
+  // in well under a second (no polling).
+  //
+  // If the user has unsaved edits in a form (`EditMode.isDirty()`) the
+  // re-render is deferred and a banner appears — re-rendering would
+  // replace the EasyMDE/CodeMirror DOM and silently destroy in-progress
+  // text. The banner clears automatically once the user saves (which
+  // fires `editmode:clean`) or they can dismiss/refresh on demand.
   let _lastHash    = null;
   let _pendingHash = null;   // latest hash seen while dirty; null = nothing pending
   let _es          = null;
   let _esRetryMs   = 1000;
 
+  /**
+   * Apply a remote `data-changed` notification: refetch the dataset, re-
+   * apply sidebar visibility, and re-render the current route. Skipped
+   * when `hash` matches the last-applied hash (a duplicate event).
+   *
+   * Special case: while the Settings page is mid-self-commit (slider
+   * drag still in progress), we keep the data fresh but skip the
+   * wholesale re-render so the slider DOM isn't torn out from under
+   * the user. Genuine third-party edits during that ~1.5 s window get
+   * one missed re-render at worst — the next change re-renders cleanly.
+   *
+   * @param {string|null} hash - Server-computed dataset hash, or null
+   *                             to "refetch unconditionally".
+   * @returns {Promise<void>}
+   */
   async function _applyRemoteChange(hash) {
     // Skip only if we already have this exact hash; null means "unknown, refetch anyway"
     if (hash !== null && _lastHash !== null && hash === _lastHash) return;

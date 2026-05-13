@@ -23,9 +23,10 @@ let _draggingId = null;
 
 export const Timeline = (() => {
 
-  // Per-render caches. Built once at the top of render() so
-  // _cardHTML / _eventAccentColor do O(1) id→entity lookups
-  // instead of .find() each time (was O(n·m) across the board).
+  // Per-render id→entity Maps. Built fresh at the top of render() so
+  // _cardHTML / _eventAccentColor do O(1) lookups instead of a linear
+  // .find() inside every card on every render — the kanban can hold
+  // hundreds of cards, so the Map indirection actually matters.
   let _charMap = new Map();
   let _locMap  = new Map();
 
@@ -224,11 +225,16 @@ export const Timeline = (() => {
   }
 
   // ── Main render ───────────────────────────────────────────────
+
+  /**
+   * Render the timeline kanban into `#main-content`. Builds one column
+   * per `Sezení 1..maxSitting` (including any empty sittings in the
+   * middle so a skipped session is a valid drop target), plus a
+   * phantom "Nové sezení N+1" column when edit mode is active.
+   */
   function render() {
     const events = Store.getEvents();
 
-    // Build id→entity Maps once per render so card HTML is O(1) per
-    // lookup. Was O(n) .find() per character/location/event.
     _charMap = new Map(Store.getCharacters().map(c => [c.id, c]));
     _locMap  = new Map(Store.getLocations().map(l => [l.id, l]));
 

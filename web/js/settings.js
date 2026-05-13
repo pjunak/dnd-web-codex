@@ -61,14 +61,13 @@ export const Settings = (() => {
   // with `_currentMapId` in map.js and the keys used in
   // `settings.mapConfigs`.
   let _activeMapId = 'world';
-  // Cache-bust token applied to map preview <img> URLs. Stays
-  // stable across renders so the browser caches the image normally;
-  // bumped only when an upload actually replaces a file (or when
-  // the page first mounts, to dodge a stale CDN cache from a prior
-  // session). Earlier `?v=${Date.now()}` per render meant every
-  // re-render generated a different URL → constant refetch =
-  // visible flicker, especially when paired with the SSE-driven
-  // re-render loop that older non-idempotent migrations triggered.
+  // Cache-bust token applied to map preview <img> URLs. Stays stable
+  // across renders so the browser caches the image normally — bumped
+  // ONLY when an upload actually replaces a file (and once on first
+  // mount, so a stale CDN copy from a prior session doesn't linger).
+  // A naive `?v=${Date.now()}` per render would generate a new URL on
+  // every redraw, forcing constant refetches and visible flicker on
+  // any SSE-triggered re-render.
   const _previewBust = {};   // mapId → token
   function _previewBustFor(mapId) {
     if (!_previewBust[mapId]) _previewBust[mapId] = String(Date.now());
@@ -79,6 +78,13 @@ export const Settings = (() => {
   }
 
   // ── Render ───────────────────────────────────────────────────
+
+  /**
+   * Render the Settings page into `#main-content`. Wired into
+   * `app.js`'s router for the `/nastaveni` route. Clears scroll so
+   * users see the tab list first instead of mid-page state from the
+   * previous route.
+   */
   function render() {
     const el = document.getElementById('main-content');
     if (!el) return;
@@ -426,6 +432,13 @@ export const Settings = (() => {
   }
 
   // ── Public commands (called from inline onclick handlers) ────
+  /**
+   * Switch the active settings tab. Re-renders the right pane in place
+   * and lazy-loads the snapshot list when the Záloha tab is opened.
+   *
+   * @param {string} cat - Category id (`relationshipTypes` etc.) or a
+   *                       SPECIAL_TABS id (`worldmap`, `backup`, …).
+   */
   function selectCategory(cat) {
     _activeCat = cat;
     _editingId = null;
@@ -941,6 +954,13 @@ export const Settings = (() => {
       </div>`;
   }
 
+  /**
+   * Switch the Mapy tab to show a different map's preview + config.
+   * `'world'` selects the main map; for sub-maps the id is
+   * `local-${locationId}` (matches `_currentMapId` in map.js).
+   *
+   * @param {string} mapId
+   */
   function selectMap(mapId) {
     _activeMapId = mapId || 'world';
     render();
@@ -993,6 +1013,13 @@ export const Settings = (() => {
   function isPendingSelfCommit() {
     return Date.now() < _selfCommitUntil;
   }
+  /**
+   * Persist the zoom-scale slider's current value for the currently-
+   * selected map. Debounced (see comment block above) and live-pushed
+   * to a mounted `WorldMap` so markers rescale immediately.
+   *
+   * @param {string|number} value - Range input value (clamped to 0..1).
+   */
   function commitMapZoomRatio(value) {
     let n = parseFloat(value);
     if (!isFinite(n)) n = 0;

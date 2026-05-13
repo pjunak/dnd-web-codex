@@ -1,9 +1,14 @@
+// ═══════════════════════════════════════════════════════════════
+//  DATA — default seeds for every collection.
+//  Merged into the live dataset on first load via `_mergeDefaults`.
+//  Per-id deletions are remembered in `deletedDefaults` so a removed
+//  default doesn't resurrect on restart.
+// ═══════════════════════════════════════════════════════════════
+
+/** Empty default for the `factions` keyed-object collection. */
 export const FACTIONS = {};
 
-// STATUS previously lived here but is now owned by SETTINGS_DEFAULTS
-// (characterStatuses below). Consumers should use Store.getStatusMap()
-// which reads from user-editable settings with a defaults fallback.
-
+/** Entity collections — empty by default; users populate them at runtime. */
 export const CHARACTERS        = [];
 export const LOCATIONS         = [];
 export const EVENTS            = [];
@@ -11,8 +16,11 @@ export const RELATIONSHIPS     = [];
 export const MYSTERIES         = [];
 export const HISTORICAL_EVENTS = [];
 
-// Seeded D&D races. Users can delete any of these; deletion tombstones
-// in `deletedDefaults` prevent re-seeding on restart.
+/**
+ * Generic D&D species seed. Users can delete or replace any entry; a
+ * tombstone in `deletedDefaults` prevents the deleted id from re-seeding
+ * after a restart. Treat this list as a starter palette, not a contract.
+ */
 export const SPECIES = [
   { id: "human",      name: "Člověk",       description: "" },
   { id: "elf",        name: "Elf",          description: "" },
@@ -31,23 +39,29 @@ export const SPECIES = [
   { id: "firbolg",    name: "Firbolg",      description: "" },
 ];
 
+/** Empty default for the `pantheon` collection. */
 export const PANTHEON  = [];
+
+/** Empty default for the `artifacts` collection. */
 export const ARTIFACTS = [];
 
-// ── Relationship types ─────────────────────────────────────────
-// Single source of truth. Shape:
-//   id        — stable key persisted on relationship records
-//   label     — Czech-facing text shown in chips, tooltips, legends
-//   dirs      — which directionality choices are offered in the editor
-//               ('from' = A→B, 'to' = B→A, 'both' = undirected)
-//   color     — edge paint in cloudmap (Cytoscape line-color)
-//   style     — edge stroke style: solid | dashed | dotted
-//   target    — which kind of entity the relationship targets ("character"
-//               for now; future-proof for location/faction relationships).
-//
-// Phase 7 (Settings) will move this into the user-editable `settings`
-// collection. Everything that used to read from local copies should
-// import from here and pipe through the resolver helpers below.
+/**
+ * Built-in relationship types. Each entry is the contract every consumer
+ * (cloudmap edges, relationship pickers, settings editor) reads against.
+ *
+ * Field reference:
+ * - `id`     — stable key persisted on relationship records.
+ * - `label`  — Czech-facing chip / tooltip / legend text.
+ * - `dirs`   — which directionality choices the editor offers
+ *              (`'from'` = A→B, `'to'` = B→A, `'both'` = undirected).
+ * - `color`  — Cytoscape `line-color` for the cloudmap edge.
+ * - `style`  — edge stroke: `'solid' | 'dashed' | 'dotted'`.
+ * - `target` — which entity kind the relationship targets (`'character'`
+ *              today; `'location'` is wired in for `mission`).
+ *
+ * Mirrored into `settings.relationshipTypes` on first load so users can
+ * extend the list at runtime; this constant remains the seed source.
+ */
 export const REL_TYPES = [
   { id:'commands',    label:'velí',           dirs:['from','to'],        color:'#C9A14B', style:'solid',  target:'character' },
   { id:'ally',        label:'spojenec/kyně', dirs:['from','to','both'], color:'#2E7D32', style:'solid',  target:'character' },
@@ -86,14 +100,11 @@ export const SETTINGS_DEFAULTS = {
     { id: 'zena',  label: 'Žena' },
   ],
 
-  // Place/pin types on the world map and local maps. `size` is the
-  // default marker pixel size for this type — used as the pre-fill
-  // when a new place of this type is created. Per-place override
-  // lives on `location.size`. Replaces the legacy `priority` field
-  // (1/2/3 → 36/30/26 mapping migrated by store.js); marker
-  // visibility was decoupled from priority in favour of the future
-  // per-Pohled rule system. Tier sizing reflects map prominence,
-  // not zoom-gating.
+  // Place / pin types on the world map and local maps. `size` is the
+  // default marker pixel size for this type, used as the pre-fill when
+  // a new place of this type is created; per-place overrides live on
+  // `location.size`. Tier sizing reflects map prominence, not zoom
+  // visibility — visibility rules will be per-Pohled (see roadmap).
   pinTypes: [
     { id:'major_city',  icon:'🏙',  label:'Velké město',  color:'#D4A017', size:38 },
     { id:'city',        icon:'🏛',  label:'Město',         color:'#C0A060', size:32 },
@@ -125,8 +136,9 @@ export const SETTINGS_DEFAULTS = {
     { id:'custom',      icon:'📌',  label:'Vlastní',       color:'#8A5CC8', size:26 },
   ],
 
-  // Character status — narrower than old `captured` enum; legacy migration
-  // in store.js turns `captured` into alive + `circumstances`.
+  // Character life-state. The `circumstances` free-text field on each
+  // character covers richer states like "captured" or "missing" without
+  // bloating this enum.
   characterStatuses: [
     { id: 'alive',   label: 'Naživu',   color: '#2E7D32', icon: '●' },
     { id: 'dead',    label: 'Mrtvý/á', color: '#8B0000', icon: '✦' },

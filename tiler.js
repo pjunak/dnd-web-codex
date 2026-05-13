@@ -34,6 +34,21 @@ function _maxZoomFor(w, h) {
   return z;
 }
 
+/**
+ * Build (or rebuild) the Leaflet tile pyramid for a single map.
+ *
+ * Output layout:  `data/maps/tiles/<mapId>/{z}/{x}/{y}.jpg`
+ *                 + `data/maps/tiles/<mapId>/tiles.json` manifest.
+ *
+ * Skips the build when `tiles.json` already exists and its `srcHash`
+ * matches the current source-file fingerprint (size + mtime). Delete
+ * the output folder to force a rebuild.
+ *
+ * @param {string} mapId - Logical map id (`world`, `local-<locId>`, …);
+ *                         path-sanitised before use.
+ * @param {string} srcPath - Absolute path to the source image.
+ * @returns {Promise<object>} The written `tiles.json` manifest.
+ */
 async function buildFor(mapId, srcPath) {
   if (!srcPath) throw new Error('Source missing');
   try { await fsp.access(srcPath); }
@@ -56,11 +71,15 @@ async function buildFor(mapId, srcPath) {
 
   const maxZ = _maxZoomFor(w, h);
 
-  // Aspect: we place the image in a square canvas of side (2^maxZ * TILE_SIZE),
-  // top-left aligned, leaving transparent background on the short side. At
-  // render time Leaflet uses the manifest's imgW/imgH to compute pin fractions
-  // relative to the original image — the transparent padding is hidden via
-  // bounds math.
+  // The pyramid's logical canvas is a square of side `canvasLong`
+  // (= TILE_SIZE × 2^maxZoom). Source images aren't square, so we
+  // place the image top-left and pad the short side with the
+  // background colour set in the `extend` call below. The padding
+  // never reaches the client visually because Leaflet's `bounds` use
+  // `imgW`/`imgH` from the manifest to clip the view to the original
+  // pixels — pin coordinates (stored as fractions of the original
+  // image) project onto the same rectangle, so the padded area is
+  // outside the bounds entirely.
   const canvasLong = TILE_SIZE * (1 << maxZ);
 
   for (let z = 0; z <= maxZ; z++) {

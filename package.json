@@ -1,7 +1,7 @@
 {
-  "name": "tiamat",
+  "name": "ttrpg-codex",
   "version": "1.0.0",
-  "description": "D&D campaign tracker — Tiamat",
+  "description": "Self-hostable web codex for D&D and other TTRPGs",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

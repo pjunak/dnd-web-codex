@@ -117,19 +117,28 @@ export const WorldMap = (() => {
     'dungeon','cave','ruin','graveyard','battlefield','landmark','forest',
     'mountain','lake','curiosity','region','enemy','custom',
   ]));
-  // Public for the Settings marker-icon panel — needs to know whether
-  // a given pin type has a bundled default to surface to the GM.
+  /**
+   * @param {string} pinType - Pin type id from `pinTypes` settings.
+   * @returns {string|null} Path to the bundled default SVG for this
+   *   pin type (null when none ships — user-created pin types). Used
+   *   by the Settings marker-icon panel to surface a "Výchozí ikona"
+   *   placeholder.
+   */
   function bundledDefaultUrl(pinType) {
     return BUNDLED_DEFAULT_ICONS.has(pinType) ? `/icons-defaults/${pinType}.svg` : null;
   }
   const _bundledDefaultUrl = bundledDefaultUrl;
 
-  // Public — resolves the appropriate icon URL for a wiki Location
-  // record (built via synthetic pin shape). Lets wiki.js render the
-  // same artwork on /mista cards and the location article side card
-  // that the map shows for that pin. Returns null when neither a
-  // user upload nor a bundled default is available; callers fall
-  // back to the emoji glyph in that case.
+  /**
+   * Resolve the icon URL for a wiki Location record using the same
+   * fallback chain as the map (uploaded → bundled → null), so wiki
+   * cards and the article side panel render the same artwork the
+   * map shows. Callers fall back to the emoji glyph when this returns
+   * null.
+   *
+   * @param {object|null} l - Location record.
+   * @returns {string|null}
+   */
   function resolveIconForLocation(l) {
     if (!l) return null;
     return _resolveIconUrl({
@@ -315,10 +324,16 @@ export const WorldMap = (() => {
       ? _map.options.zoomDelta : 1;
     _map.setZoom(z + (dir > 0 ? step : -step));
   }
-  // Public — Settings calls this after the GM tweaks the
-  // zoom-scale slider so the live map rescales markers without
-  // waiting for the next zoom event. No-op when the live map is
-  // showing a different map than the one being edited in Settings.
+  /**
+   * Force a marker rescale using the current `zoomScaleRatio` for
+   * `mapId`. Settings calls this right after the GM commits a slider
+   * change so the live map updates without waiting for the next zoom
+   * event. No-op when the live map is showing a different map than
+   * the one being edited.
+   *
+   * @param {string} mapId - `'world'` or `local-${locId}` (matches
+   *                         `_currentMapId()`).
+   */
   function applyZoomScaleRatio(mapId) {
     if (mapId && mapId !== _currentMapId()) return;
     _applyMarkerScale();
@@ -491,12 +506,19 @@ export const WorldMap = (() => {
   function _toLL(fx, fy)  { return L.latLng(-fy * _imgH, fx * _imgW); }
   function _toFrac(ll)    { return { x: ll.lng / _imgW, y: -ll.lat / _imgH }; }
 
+  /**
+   * Render the world map (or a location's local sub-map) into
+   * `#main-content`. Wired into `app.js`'s router for the
+   * `/mapa/svet` and `/mapa/local/:locId` routes.
+   *
+   * @param {string|null} parentId - Location id whose `localMap` image
+   *   is the backdrop, or `null`/falsy for the world map. Stale ids
+   *   (deleted location, unmapped) silently fall back to the world
+   *   map so bookmarks degrade gracefully.
+   */
   function render(parentId) {
-    // Switching map context. parentId=null → world map; otherwise a
-    // location whose `localMap` image is the backdrop. Defensive
-    // fallback: if the URL points at a deleted/unmappable location,
-    // drop back to the world map silently rather than rendering a
-    // broken backdrop.
+    // parentId=null → world map; otherwise a location whose `localMap`
+    // image is the backdrop. Stale ids fall back to the world map.
     if (parentId) {
       const p = Store.getLocation(parentId);
       if (!p || !p.localMap) parentId = null;
@@ -1653,9 +1675,15 @@ export const WorldMap = (() => {
     if (_eventPathsVisible) _drawEventPaths();
   }
 
-  // Public entry-point for the wiki "📍 Umístit na mapu" button. Navigates
-  // to the correct map (world or parent's local map), enters add-mode, and
-  // arms the next click to assign x/y to this existing location.
+  /**
+   * Begin placing an existing (unplaced) location on the appropriate
+   * map. Bound to the wiki "📍 Umístit na mapu" button. Navigates to
+   * the right map context (world or the location's parent's local
+   * map), enters add-mode, and arms the next map click to write x/y
+   * onto the existing location record.
+   *
+   * @param {string} locId
+   */
   function startPlacingPin(locId) {
     const loc = Store.getLocation(locId);
     if (!loc) return;
@@ -1797,9 +1825,14 @@ export const WorldMap = (() => {
     if (ev?.key === 'Enter') { ev.preventDefault(); jumpToFirstMatch(); }
   }
 
-  // Zoom to a pin. If the pin lives on a different map (e.g. a sub-pin
-  // in a dungeon while we're viewing the world map), switch context
-  // first, then center on the pin once the map has re-initialised.
+  /**
+   * Fly the camera to the marker for `pinId`. If the pin lives on a
+   * different map than the one currently shown, switches context first
+   * and waits (polled, ≤ 30 × 80 ms) for the marker to mount before
+   * flying. Opens the side panel for the pin on arrival.
+   *
+   * @param {string} pinId - Location id (pins ARE locations).
+   */
   function zoomToPin(pinId) {
     const loc = Store.getLocation(pinId);
     if (!loc || typeof loc.x !== 'number') return;
@@ -1848,10 +1881,14 @@ export const WorldMap = (() => {
       : '#/mapa/svet';
   }
 
-  // Public entry point used from wiki pages. Navigates into the correct
-  // map context (world or parent local map), then flies to the pin once
-  // Leaflet has finished its async init. If the map is already up, this
-  // is equivalent to zoomToPin.
+  /**
+   * Wiki-page entry point: navigate into the correct map context (world
+   * or parent local map), then fly to the pin once Leaflet has finished
+   * its async init. Equivalent to `zoomToPin` if the map is already up
+   * and showing the right context.
+   *
+   * @param {string} pinId - Location id.
+   */
   function showPin(pinId) {
     const loc = Store.getLocation(pinId);
     if (!loc || typeof loc.x !== 'number') return;
@@ -1870,8 +1907,13 @@ export const WorldMap = (() => {
     }
   }
 
-  // Switch the map view to a parent location's local map (parent.localMap
-  // image, sub-pins overlaid). No-ops if the parent has no localMap set.
+  /**
+   * Switch the live map to a parent location's local sub-map (the
+   * parent's `localMap` image as backdrop with sub-pins overlaid).
+   * Alerts and no-ops if the parent has no `localMap` configured.
+   *
+   * @param {string} parentId - Location id of the parent.
+   */
   function openLocalMap(parentId) {
     const parent = Store.getLocation(parentId);
     if (!parent || !parent.localMap) {

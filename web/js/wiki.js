@@ -250,10 +250,29 @@ export const Wiki = (() => {
   //
   // The body comes last, after the structured data, matching
   // wiki convention: facts up front, prose at the bottom.
+  /**
+   * Shared two-column layout used by every entity article (character,
+   * location, event, mystery, faction, species, deity, artifact,
+   * historical event). Renders a sticky left side-card with the
+   * portrait + title + chips + facts + auto-generated outline, and a
+   * main column holding `sections` followed by the markdown body.
+   *
+   * @param {object} opts
+   * @param {string|null} [opts.visual]   - HTML for the side-card visual.
+   * @param {string} [opts.title]
+   * @param {string} [opts.subtitle]
+   * @param {Array<string>} [opts.chips]  - Pre-rendered badge HTML strings.
+   * @param {Array<{label:string,value:string}>} [opts.facts]
+   * @param {Array<{title:string,html:string}>} [opts.sections]
+   * @param {string} [opts.body]          - Pre-rendered markdown HTML.
+   * @param {string} [opts.outlineSource] - Raw markdown for TOC extraction.
+   * @param {boolean} [opts.back=true]
+   * @returns {string} Complete article HTML.
+   */
   function _articleShell({
     visual = null, title = '', subtitle = '',
     chips = [], facts = [], sections = [], body = '',
-    outlineSource = '',           // raw markdown used to build the TOC
+    outlineSource = '',
     back = true,
   }) {
     const chipsHtml = (chips || []).filter(Boolean).join('');
@@ -474,8 +493,14 @@ export const Wiki = (() => {
   }
 
   // Persist a single campaign field when the user blurs an editable
-  // hero region. No-op if the user didn't change anything (Store will
-  // still fire a sync, but the server is idempotent).
+  /**
+   * Persist a single campaign-metadata field (`name` or `tagline`) edited
+   * inline from the dashboard hero. Bound to each contenteditable's
+   * `onblur`. The server is idempotent so a no-op edit is harmless.
+   *
+   * @param {string} field - `'name'` or `'tagline'`.
+   * @param {string} value
+   */
   function saveCampaignField(field, value) {
     if (typeof field !== 'string' || !field) return;
     const patch = {};
@@ -677,8 +702,13 @@ export const Wiki = (() => {
     `;
   }
 
-  // Legacy shim: old callers passed a single string. Treat as a
-  // one-chip filter so inline-HTML that survived the refactor still works.
+  /**
+   * Replace the Postavy list filter chips. Accepts an array of strings
+   * (the canonical TagFilter shape) or a single string (treated as a
+   * one-chip filter — easier when called from inline HTML).
+   *
+   * @param {string|string[]} v
+   */
   function setPostavySearch(v) {
     const arr = Array.isArray(v) ? v : (v ? [String(v)] : []);
     _listState.postavy.values = arr;
@@ -1887,6 +1917,15 @@ export const Wiki = (() => {
   }
 
   // ── Public API ─────────────────────────────────────────────────
+
+  /**
+   * Render the named wiki page into `#main-content`. Dispatched from
+   * `app.js`'s router. The optional `param` is the entity id (or for
+   * the lists, an attitude / faction filter id depending on the page).
+   *
+   * @param {string} page - Page key, e.g. `'dashboard'`, `'postava'`.
+   * @param {string} [param] - Entity id or filter argument.
+   */
   function renderPage(page, param) {
     const el = document.getElementById("main-content");
     if (!el) return;

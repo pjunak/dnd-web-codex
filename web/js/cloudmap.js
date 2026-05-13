@@ -32,7 +32,17 @@ export const CloudMap = (() => {
   const H_DIVIDER  = 6;
   const H_FACT     = 18;
 
-  // ── Canvas TextMeasure (Pretext-style) ──────────────────────
+  // ── Canvas text measurement + greedy word-wrap ──────────────
+  // Word widths come from a single offscreen 2D canvas — measuring
+  // hundreds of cards via DOM `getBoundingClientRect` would force
+  // synchronous layout for every cloud and tank the layout pass.
+  // Canvas `measureText` is essentially free in comparison and
+  // doesn't touch the document tree.
+  //
+  // Per-(font + word) results cache in `_cache` for the lifetime of
+  // the page. Key is `${font}|${word}` so changing font invalidates
+  // automatically; the typical card body has only ~50 distinct words
+  // so the cache stays small even on big graphs.
   const _cvs = document.createElement('canvas');
   const _ctx = _cvs.getContext('2d');
   const _cache = new Map();
@@ -46,7 +56,17 @@ export const CloudMap = (() => {
     return w;
   }
 
-  // Returns array of wrapped line strings.
+  /**
+   * Greedy word-wrap. Splits `text` into lines that each fit `maxW`
+   * pixels in the supplied `font`. Words that exceed `maxW` on their
+   * own end up on a single overflowing line — no mid-word break (the
+   * card uses CSS `overflow:hidden` so the visible width still caps).
+   *
+   * @param {string} text
+   * @param {string} font  - CSS shorthand (e.g. `'13px Inter'`).
+   * @param {number} maxW  - Pixel budget per line.
+   * @returns {string[]}
+   */
   function _wrap(text, font, maxW) {
     const words = String(text || '').split(' ').filter(Boolean);
     if (!words.length) return [''];
@@ -1878,20 +1898,28 @@ export const CloudMap = (() => {
   // Greedy hill-climbing on the **worst-offender** node. Each round:
   //   1. score every node by how many crossings its incident edges
   //      participate in;
-  //   2. take the node with the highest score;
+  //   2. take the unstuck node with the highest score;
   //   3. try swapping it with every other node — keep the swap that
   //      drops total crossings the most;
   //   4. if no swap helps, mark the node "stuck" and move on to the
-  //      next-worst-offender;
-  //   5. stop when no improvement is possible from any node, OR when
-  //      the attempt budget is exhausted.
+  //      next worst offender;
+  //   5. stop when total crossings hit zero, no node can improve, or
+  //      the attempt budget (`MAX_ROUNDS`) is exhausted.
   //
-  // Why this beats random-pair annealing: random pair selection wastes
-  // most attempts on irrelevant nodes (those with zero crossings).
-  // Targeting worst-offenders concentrates the search where it matters
-  // and finds the *globally best* swap for that node each round, not
-  // a random local one. For a 50-node graph this typically eliminates
-  // 70-100 % of the crossings FR alone leaves behind, in a few ms.
+  // Why this beats random-pair simulated annealing: random pair
+  // selection wastes most attempts on irrelevant nodes (those with
+  // zero crossings). Targeting worst-offenders concentrates the search
+  // where it matters and finds the *globally best* swap for that node
+  // each round, not a random local one. For a 50-node graph this
+  // typically eliminates 70-100 % of the crossings FR alone leaves
+  // behind, in a few milliseconds.
+  //
+  // This stays a heuristic — finding the optimal crossing-free layout
+  // is NP-hard. The hill-climber can get stuck in a local minimum; if
+  // that ever becomes a problem, the right next step is restart-with-
+  // random-perturbation rather than a bigger neighbourhood, since the
+  // bottleneck is how often the *first* swap helps, not how many
+  // swaps we try per round.
   //
   // Standard segment-crossing test: two segments AB and CD cross iff
   // A and B are on opposite sides of line CD AND C and D are on
@@ -2693,6 +2721,15 @@ export const CloudMap = (() => {
   }
 
   // ── Public ────────────────────────────────────────────────
+
+  /**
+   * Render a mind-map mode into the current view. Tears down any
+   * previous Cytoscape instance + HTML overlay first so re-rendering
+   * the same mode is safe (used by SSE refresh). Wired into `app.js`
+   * for the `/mapa/{frakce,vztahy,tajemstvi,palac}` routes.
+   *
+   * @param {'frakce'|'vztahy'|'tajemstvi'|'casova-osa'} mode
+   */
   function render(mode) {
     _destroy();
     switch (mode) {
@@ -2704,7 +2741,11 @@ export const CloudMap = (() => {
     }
   }
 
-  // Clear saved positions for current mode and re-render with fresh physics layout
+  /**
+   * Drop saved positions for the current mode and re-render so the
+   * physics layout starts fresh. Used by the toolbar "⟳ Rozložení"
+   * button.
+   */
   function resetLayout() {
     _clearPositions();
     if (_currentMode) render(_currentMode);

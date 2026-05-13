@@ -27,7 +27,7 @@ test('isForbiddenKey: accepts ordinary string ids', () => {
 // Tests run against a real tempdir so the realpath/symlink branch is
 // exercised, not just the string-prefix branch.
 function withTmp(fn) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tiamat-test-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-test-'));
   try { return fn(dir); }
   finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
@@ -76,7 +76,7 @@ test('safeJoinIn: allows nested paths whose ancestors exist', () => {
 const canSymlink = process.platform !== 'win32';
 test('safeJoinIn: rejects symlinks pointing outside the dir', { skip: !canSymlink }, () => {
   withTmp(dir => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'tiamat-out-'));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-out-'));
     try {
       fs.symlinkSync(outside, path.join(dir, 'escape'));
       assert.equal(safeJoinIn(dir, 'escape/anything'), null);

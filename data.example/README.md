@@ -1,30 +1,42 @@
-# data/ — Server Data Directory
+# `data/` — Server Data Directory
 
-This folder shows the expected structure of the `data/` directory on the server.
-The real `data/` is gitignored — it lives as a Docker volume and is never committed.
+This folder shows the expected layout of the runtime `data/` directory.
+The real `data/` is gitignored — it lives as a Docker volume and is
+never committed.
+
+## Layout
 
 ```
 data/
 ├── maps/
-│   └── swordcoast/
-│       └── sword_coast.jpg        served at /maps/swordcoast/sword_coast.jpg
+│   ├── swordcoast/                    # World-map backdrop image
+│   │   └── sword_coast.{jpg,png}      #   served at /maps/swordcoast/...
+│   ├── local/                         # Per-location sub-map images
+│   │   └── {locationId}/map.{ext}     #   served at /maps/local/{id}/...
+│   └── tiles/                         # Generated tile pyramids (sharp)
+│       └── {mapId}/{z}/{x}/{y}.jpg
 │
-├── portraits/
-│   └── {charId}/
-│       └── portrait.jpg           served at /portraits/{charId}/portrait.jpg
+├── portraits/                         # Character portraits
+│   └── {charId}/portrait.{ext}        #   served at /portraits/{id}/...
 │
-├── characters.json
+├── icons/                             # Custom marker artwork
+│   └── {pinTypeId}/{file}.{svg,png}   #   served at /icons/{id}/...
+│
+├── characters.json                    # Per-collection JSON files
 ├── relationships.json
 ├── locations.json
 ├── events.json
 ├── mysteries.json
-├── mapPins.json
 ├── factions.json
-└── deletedDefaults.json
+├── species.json
+├── pantheon.json
+├── artifacts.json
+├── historicalEvents.json
+├── settings.json                      # User-editable enums
+├── campaign.json                      # Campaign name + tagline
+└── deletedDefaults.json               # Tombstones for removed seed entries
 ```
 
-## Deploying data to a new server
-
-```bash
-scp -r ./data/ root@YOUR_VPS:/opt/tiamat/
-```
+Snapshots live in a sibling directory (`data-snapshots/`), not inside
+`data/`. See [`docs/SELF_HOSTING.md`](../docs/SELF_HOSTING.md) for
+backup, restore, and snapshot operations.

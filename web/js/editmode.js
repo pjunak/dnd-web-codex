@@ -43,9 +43,16 @@ export const EditMode = (() => {
   }
 
   // ── Toast ──────────────────────────────────────────────────────
-  // Supports an optional `opts.action = { label, onClick }` for undo-
-  // style buttons. When an action is present the toast stays up for
-  // `opts.timeout` ms (default 8s) so the user has time to react.
+
+  /**
+   * Show a transient status message at the bottom of the screen. The
+   * default 2.5 s timeout is bumped to 8 s when an `action` button is
+   * supplied (typical use: an undo affordance after a destructive op).
+   *
+   * @param {string} msg
+   * @param {boolean} [ok=true] - `false` styles the toast as an error.
+   * @param {{action?: {label: string, onClick: Function}, timeout?: number}} [opts]
+   */
   function _toast(msg, ok = true, opts = {}) {
     let t = document.getElementById("edit-toast");
     if (!t) {
@@ -150,6 +157,12 @@ export const EditMode = (() => {
     window.dispatchEvent(new CustomEvent('editmode:dirty'));
   }
 
+  /**
+   * @returns {boolean} `true` while the user has unsaved edits.
+   *   The SSE listener consults this before applying remote changes;
+   *   if `true`, the change is queued behind a banner instead of
+   *   replacing the live form DOM.
+   */
   function isDirty() { return _dirty; }
 
   function _showDraftBanner(textarea, draft, mde) {
@@ -319,8 +332,18 @@ export const EditMode = (() => {
   }
 
   // ── State ──────────────────────────────────────────────────────
+
+  /** @returns {boolean} `true` when the edit overlay is currently on. */
   function isActive() { return _active; }
 
+  /**
+   * Toggle edit mode on/off. When enabling, prompts for the edit
+   * password if no `edit_session` cookie is present. When disabling,
+   * confirms first if there are unsaved edits — toggling re-renders
+   * the page, which would silently discard them.
+   *
+   * @returns {Promise<void>}
+   */
   async function toggle() {
     // Toggling re-renders the page (synthetic hashchange below) which
     // would silently lose any unsaved edits in the active form. Confirm
@@ -447,13 +470,10 @@ export const EditMode = (() => {
 
   // Read-back delegated to EditTemplates so the chip-row HTML and the
   // matching parser stay co-located (and map.js's pin form can reuse
-  // the same parser without duplicating the DOM walk).
+  // the same parser without duplicating the DOM walk). Strength is per-
+  // enum-item now; `Settings.updateStrengthReadout` drives the slider
+  // in the Postoje k partě editor.
   const _readAttitudeChipRow = EditTemplates.readAttitudeChipRow;
-
-  // (Per-chip strength sliders were removed when strength moved off
-  // the entity onto the `attitudes` settings enum item — see
-  // `Settings.updateStrengthReadout` for the live-readout helper that
-  // now drives the strength slider in the Postoje k partě editor.)
 
   // ══════════════════════════════════════════════════════════════
   //  CHARACTER EDITOR
@@ -483,6 +503,18 @@ export const EditMode = (() => {
   }
 
   // ── Character save / delete ────────────────────────────────────
+
+  /**
+   * Read the character editor form for `originalId` (or the "new"
+   * placeholder), build the entity record, and persist via
+   * `Store.saveCharacter`. Performs portrait migration (the new-
+   * entity form uses a `_new` temp folder that gets remapped here),
+   * cleans up old portraits when the URL changes, and runs any
+   * pending after-save hook (e.g. linking the character into a
+   * source location's roster).
+   *
+   * @param {string} [originalId] - Existing id; absent for new entities.
+   */
   function saveCharacter(originalId) {
     const uid  = originalId || "new";
     const name = document.getElementById(`ef-name-${uid}`)?.value.trim();
@@ -558,8 +590,15 @@ export const EditMode = (() => {
     _refreshTo(`#/postava/${newId}`);
   }
 
+  /**
+   * Delete a character with an inline 8-second undo affordance in the
+   * toast. The `Store.deleteCharacter` call cascades through relations
+   * and events; the `Store.undelete` call restores the snapshot.
+   *
+   * @param {string} id
+   */
   function deleteCharacter(id) {
-    Store.deleteCharacter(id); // store also clears relationships + snapshots for undo
+    Store.deleteCharacter(id); // store cascades into relationships + snapshots for undo
     _toast("Postava smazána", true, {
       action: { label: '↶ Vrátit', onClick: () => {
         Store.undelete('characters', id);
@@ -1006,12 +1045,23 @@ export const EditMode = (() => {
   }
 
   // ── EasyMDE mount ─────────────────────────────────────────────
-  // Track every mounted EasyMDE instance. When `navigate()` replaces
-  // the page DOM (innerHTML) the old textareas become detached but their
-  // EasyMDE/CodeMirror wrappers retain document-level listeners and
-  // memory until GC'd. We sweep before each mount: any tracked instance
-  // whose textarea is no longer connected gets `toTextArea()`-ed (the
-  // documented teardown that removes the wrapper + listeners).
+  // EasyMDE wraps a <textarea> in a CodeMirror instance plus a toolbar,
+  // toolbar buttons, and several DOCUMENT-level event listeners
+  // (fullscreen toggle, side-by-side preview, etc.). When `navigate()`
+  // replaces #main-content via `innerHTML = '...'`, every one of those
+  // textareas becomes detached, but the CodeMirror wrappers and their
+  // document-level listeners stay rooted in memory — they have no idea
+  // their host went away. Without explicit teardown, every route change
+  // leaks the previous editor.
+  //
+  // The fix is the registry below. Every mount records its instance in
+  // `_mountedEasyMDE`; on the next mount pass `_cleanupOrphanedEasyMDE`
+  // walks the set, finds entries whose textarea is no longer connected,
+  // and calls `mde.toTextArea()` (the documented teardown that removes
+  // the wrapper, restores the textarea, and unbinds listeners). Without
+  // this, navigating between editor pages a few dozen times noticeably
+  // slows the entire app because each leaked instance still receives
+  // every captured-phase document event.
   const _mountedEasyMDE = new Set();
   function _cleanupOrphanedEasyMDE() {
     for (const mde of _mountedEasyMDE) {
@@ -1022,12 +1072,22 @@ export const EditMode = (() => {
     }
   }
 
-  // Any <textarea class="md-easy"> rendered by edit templates gets
-  // upgraded to a CodeMirror-backed EasyMDE instance on next
-  // Widgets.mountAll pass. `forceSync:true` keeps the underlying
-  // <textarea>'s `.value` in sync on every keystroke, so existing
-  // save code reading `document.getElementById(id).value` just works.
-  // Preview goes through our sanitized renderMarkdown (marked+DOMPurify).
+  /**
+   * Upgrade every `<textarea class="md-easy">` inside `root` (default:
+   * the whole document) into a CodeMirror-backed EasyMDE editor. Skips
+   * already-mounted textareas (marked via `data-md-mounted`) so it's
+   * safe to call repeatedly — `app.js`'s `navigate()` calls this on
+   * every route change.
+   *
+   * `forceSync: true` keeps each underlying textarea's `.value`
+   * up-to-date on every keystroke, so existing save code that reads
+   * `document.getElementById(id).value` keeps working unchanged.
+   *
+   * Side-effects: sweeps orphaned instances first (see registry note
+   * above), wires draft autosave on each new editor.
+   *
+   * @param {Element|Document} [root] - Subtree to scan for textareas.
+   */
   function mountEasyMDE(root) {
     _cleanupOrphanedEasyMDE();
     const scope = root || document;

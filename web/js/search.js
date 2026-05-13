@@ -148,6 +148,11 @@ export const GlobalSearch = (() => {
     _results.innerHTML = html;
   }
 
+  /**
+   * Open the global search palette. Builds the overlay lazily on first
+   * call, clears the input, seeds with recently-edited entities so the
+   * empty state is useful, and focuses the input on the next tick.
+   */
   function open() {
     _build();
     _root.hidden = false;
@@ -158,11 +163,14 @@ export const GlobalSearch = (() => {
     setTimeout(() => _input.focus(), 0);
   }
 
+  /** Hide the palette without destroying it. Idempotent — safe to call
+   *  even before `open()` has built the overlay. */
   function close() {
     if (!_root) return;
     _root.hidden = true;
   }
 
+  /** @returns {boolean} `true` while the palette is mounted and visible. */
   function isOpen() { return _root && !_root.hidden; }
 
   // ── Global keybinding: Ctrl+K / Cmd+K ────────────────────────

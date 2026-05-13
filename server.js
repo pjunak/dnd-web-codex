@@ -53,9 +53,8 @@ fs.mkdirSync(SWORDCOAST_DIR, { recursive: true });
 fs.mkdirSync(ICONS_DIR,      { recursive: true });
 fs.mkdirSync(SNAPSHOTS_DIR,  { recursive: true });
 
-// One-shot relocation: if a pre-A3 deployment left snapshots inside
-// data/, move them to the new sibling dir. Idempotent — re-running is
-// a no-op once data/snapshots is gone.
+// Idempotent relocation: any leftover snapshots inside data/ get
+// moved to the new sibling directory.
 try {
   if (fs.existsSync(LEGACY_SNAPSHOTS_DIR)) {
     const list = fs.readdirSync(LEGACY_SNAPSHOTS_DIR);
@@ -143,12 +142,10 @@ const localMapStorage = multer.diskStorage({
 const uploadLocalMap = multer({ storage: localMapStorage, limits: { fileSize: 20 * 1024 * 1024 }, fileFilter: _imageFilter });
 
 // ── Marker icon uploads ─────────────────────────────────────────
-// Custom marker artwork lives under data/icons/<pinTypeId>/<file>.
-// Per-pinType strategy + per-file state assignments are stored on
-// settings.pinTypes[i].iconConfig (in-band on the existing settings
-// PATCH path). Filenames are slugified before write so an upload of
-// "Castle Burning.png" lands at "castle_burning.png" and round-trips
-// cleanly through URLs without encoding hazards.
+// Filenames are slugified on write so a file like "Castle Burning.png"
+// lands at "castle_burning.png" and round-trips through URLs without
+// encoding hazards. Per-pin-type strategy lives in-band on
+// `settings.pinTypes[i].iconConfig`, not on disk metadata.
 function _iconMimeOk(_req, file, cb) {
   const ok = file.mimetype === 'image/svg+xml'
           || file.mimetype === 'image/png'
@@ -415,6 +412,15 @@ function _maybeBustDataHash(filePath) {
   } catch (_) { _cachedDataHash = null; }
 }
 
+/**
+ * Compute a 16-hex-digit hash over every JSON file at the top level of
+ * `DATA_DIR`. Used as the change-token broadcast over SSE: clients
+ * compare it to their last seen hash to dedupe duplicate `data-changed`
+ * events. Cached until the next mutation invalidates it via
+ * `_maybeBustDataHash`.
+ *
+ * @returns {Promise<string>} 16-char SHA-1 prefix or `'none'` on read failure.
+ */
 async function _dataHash() {
   if (_cachedDataHash !== null) return _cachedDataHash;
   try {
@@ -438,7 +444,10 @@ function getFile(type) {
   return path.join(DATA_DIR, safeType + '.json');
 }
 
-// ── SSE broadcast (Phase 5.1) ────────────────────────────────────
+// ── SSE broadcast ────────────────────────────────────────────────
+// Every successful write fans a `data-changed` event out to every
+// connected client. Clients refetch + re-render in well under a
+// second; no polling involved.
 const _sseClients = new Set();
 function _broadcast(eventName, payload) {
   const data = `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -469,6 +478,16 @@ const ALL_TYPES = [
   'historicalEvents', 'campaign',
 ];
 
+/**
+ * GET /api/data
+ *
+ * Read every collection's JSON file and merge into a single object
+ * keyed by collection name. Returns `null` (200) when no JSON file
+ * exists yet — clients treat that as "fresh install, use defaults".
+ *
+ * Auth: none. The dataset is readable by anyone (the wiki is public);
+ * editing requires the `edit_session` cookie.
+ */
 app.get('/api/data', async (_req, res) => {
   try {
     const campaign = {};
@@ -520,6 +539,14 @@ function _noteFailure(ip) {
   }
 }
 
+/**
+ * POST /api/login — Validate the supplied password and issue an
+ * `edit_session` cookie on success. Rate-limited per source IP
+ * (15-minute window after a burst of failures) to make brute force
+ * impractical even with a weak password.
+ *
+ * Body: `{ password: string }`.
+ */
 app.post('/api/login', (req, res) => {
   const ip = _loginKey(req);
   if (_isBlocked(ip)) {
@@ -542,6 +569,11 @@ app.post('/api/login', (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * GET /api/auth — Probe whether the caller has a valid `edit_session`
+ * cookie. The client uses this to decide whether to show the password
+ * prompt before flipping into edit mode.
+ */
 app.get('/api/auth', requireAuth, (_req, res) => {
   res.json({ ok: true });
 });
@@ -564,6 +596,23 @@ async function _readJsonOr(filePath, fallback) {
   }
 }
 
+/**
+ * PATCH /api/data — Save or delete a single entity.
+ *
+ * Body: `{ type: string, action: 'save' | 'delete', payload: object }`.
+ *  - `type` is a collection name (validated against ALLOWED_TYPES).
+ *  - For keyed-object collections (`factions`, `settings`, `campaign`,
+ *    `deletedDefaults`), `payload.id` is the key and `payload.data`
+ *    is the value to write.
+ *  - For entity lists, `payload` IS the entity (matched on `id`,
+ *    or for relationships on `(source, target, type)`).
+ *
+ * Side effects: takes a coalesced snapshot, broadcasts `data-changed`
+ * over SSE so other clients refetch. Auto-migrates portrait paths to
+ * the canonical per-character subfolder (with path-traversal guards).
+ *
+ * Auth: required.
+ */
 app.patch('/api/data', requireAuth, (req, res) => {
   withWriteLock(async () => {
     try {
@@ -586,21 +635,24 @@ app.patch('/api/data', requireAuth, (req, res) => {
       const emptyContainer = KEYED_OBJ_TYPES.has(type) ? {} : [];
       let container = await _readJsonOr(p, emptyContainer);
 
-      // Auto-migrate portrait to canonical subfolder on character save
+      // Auto-migrate portrait to the canonical per-character subfolder
+      // on save. Both the source URL fragment AND the destination char
+      // id come from the (authenticated) client, so each is run through
+      // `_safeJoinIn` before any filesystem operation. The helper
+      // refuses traversal (`..`), absolute paths, null bytes, and (via
+      // realpath on each existing prefix) symlink escapes — without
+      // it, an authed editor could send a portrait URL like
+      // `/portraits/../../etc/passwd` or a crafted `payload.id` of
+      // `../foo` and have us rename arbitrary files into a controlled
+      // location. Auth is the first line of defence; this is the
+      // second.
       if (type === 'characters' && action === 'save' && payload?.id && payload?.portrait) {
         const charId         = payload.id;
         const cleanUrl       = payload.portrait.split('?')[0];
         const expectedPrefix = `/portraits/${charId}/portrait.`;
         if (!cleanUrl.startsWith(expectedPrefix)) {
           const relPath = cleanUrl.replace(/^\/portraits\//, '');
-          // Refuse traversal/absolute paths and verify the resolved
-          // location is still inside PORTRAITS_DIR. Without this, an
-          // authed editor could move arbitrary files into the portraits
-          // dir by sending a portrait URL like "/portraits/../../etc/passwd".
           const srcFile = _safeJoinIn(PORTRAITS_DIR, relPath);
-          // Also guard the destination charId — character ids today are
-          // ASCII slugs, but `payload.id` is caller-supplied so a crafted
-          // `..` would otherwise let the rename target escape.
           const destDir = _safeJoinIn(PORTRAITS_DIR, charId);
           let migrated = false;
           if (srcFile && destDir) {
@@ -702,11 +754,25 @@ app.patch('/api/data', requireAuth, (req, res) => {
   });
 });
 
+/**
+ * GET /api/version — Returns the current dataset hash. Useful for
+ * health-check probes (the Dockerfile HEALTHCHECK pings this), and
+ * historically for clients to poll for changes before SSE existed.
+ */
 app.get('/api/version', async (_req, res) => {
   res.json({ hash: await _dataHash() });
 });
 
-// ── SSE event stream (Phase 5.1) ──────────────────────────────────
+/**
+ * GET /api/events — Server-Sent Events stream.
+ *
+ * Emits a `hello` event on connect carrying the current data hash so
+ * the client can dedupe its very first refetch. Emits `data-changed`
+ * after every successful write. Pings every 25 s to keep proxies from
+ * dropping the idle connection.
+ *
+ * Auth: none — read-only event stream.
+ */
 app.get('/api/events', async (req, res) => {
   res.set({
     'Content-Type':      'text/event-stream',
@@ -729,6 +795,16 @@ app.get('/api/events', async (req, res) => {
   });
 });
 
+/**
+ * POST /api/portrait/:charId — Upload a character portrait image.
+ *
+ * Multer config caps at 20 MB and rejects non-image MIME types.
+ * After write, removes any previous portrait files in the same
+ * subfolder so only the new file remains (the URL the client stores
+ * doesn't carry an extension hint).
+ *
+ * Auth: required.
+ */
 app.post('/api/portrait/:charId', requireAuth, uploadChar.single('portrait'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image received' });
   const charId  = (req.params.charId || '').replace(/[^a-z0-9_\-]/gi, '_').substring(0, 60);
@@ -750,6 +826,12 @@ let _tiler = null;
 try { _tiler = require('./tiler'); }
 catch (e) { console.warn('[tiles] sharp not installed — tile generation disabled:', e.message); }
 
+/**
+ * POST /api/localmap/:locId — Upload a local sub-map image for a
+ * location. Removes any prior file with a different extension and
+ * schedules an async tile-pyramid rebuild. The returned URL is always
+ * usable; tiles just accelerate subsequent loads. Auth: required.
+ */
 app.post('/api/localmap/:locId', requireAuth, uploadLocalMap.single('localmap'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image received' });
   const locId  = (req.params.locId || '').replace(/[^a-z0-9_\-]/gi, '_').substring(0, 60);
@@ -792,6 +874,13 @@ async function _pinTypeExists(pinTypeId) {
   }
 }
 
+/**
+ * POST /api/icons/:pinTypeId — Upload up to 16 marker-icon variants
+ * for a pin type (SVG/PNG/JPEG/WEBP, 2 MB each). Validates the
+ * `pinTypeId` against the live `settings.pinTypes` list before
+ * accepting the files; rejects + cleans up uploads for unknown ids.
+ * Auth: required.
+ */
 app.post('/api/icons/:pinTypeId', requireAuth, uploadIcons.array('icons', 16), (req, res) => {
   withWriteLock(async () => {
     try {
@@ -890,9 +979,14 @@ app.delete('/api/portrait/:identifier', requireAuth, async (req, res) => {
 });
 
 // ── Snapshot API ─────────────────────────────────────────────
-// The snapshot system lives in the helpers at the top of this file.
-// Endpoints here expose list / create / restore / delete to the
-// client so the /nastaveni Záloha tab can manage them.
+// Backed by the snapshot helpers near the top of this file. The
+// `/nastaveni` Záloha tab calls these to surface the snapshot list,
+// take a manual snapshot, restore one, or undo the last N edits.
+
+/**
+ * GET /api/snapshots — List every snapshot, newest first. Each entry
+ * carries `{id, createdAt, dataHash, reason, size}`. Auth: required.
+ */
 app.get('/api/snapshots', requireAuth, async (_req, res) => {
   try {
     const files = await _snapshotFiles();
@@ -906,6 +1000,11 @@ app.get('/api/snapshots', requireAuth, async (_req, res) => {
   }
 });
 
+/**
+ * POST /api/snapshots — Take a manual snapshot now. Bypasses the
+ * 60 s coalesce window that suppresses bursts during normal save
+ * activity. Auth: required.
+ */
 app.post('/api/snapshots', requireAuth, (_req, res) => {
   withWriteLock(async () => {
     try {
@@ -918,6 +1017,12 @@ app.post('/api/snapshots', requireAuth, (_req, res) => {
   });
 });
 
+/**
+ * POST /api/snapshots/:id/restore — Roll the entire `data/` directory
+ * back to a snapshot. The handler takes a `pre-restore` snapshot first
+ * so the restore itself is undoable, then broadcasts `data-changed` so
+ * every connected client refetches. Auth: required.
+ */
 app.post('/api/snapshots/:id/restore', requireAuth, (req, res) => {
   withWriteLock(async () => {
     try {
@@ -932,9 +1037,12 @@ app.post('/api/snapshots/:id/restore', requireAuth, (req, res) => {
   });
 });
 
-// Revert the last N changes by restoring the snapshot N-1 positions
-// back in the newest-first list (so n=1 = second-newest snapshot,
-// which represents state before the most recent change).
+/**
+ * POST /api/snapshots/revert-last/:n — Undo the last N edits by
+ * restoring the snapshot N positions before the newest. n=1 restores
+ * the state right before the most recent change. Capped at 50.
+ * Auth: required.
+ */
 app.post('/api/snapshots/revert-last/:n', requireAuth, (req, res) => {
   withWriteLock(async () => {
     const n = Math.max(1, Math.min(50, Number(req.params.n) || 1));
@@ -990,6 +1098,12 @@ const uploadWorldMap = multer({
   fileFilter: _imageFilter,
 });
 
+/**
+ * POST /api/worldmap — Replace the world map backdrop image. Removes
+ * any previous file with a different extension, schedules an async
+ * tile-pyramid rebuild, returns the new URL. Capped at 40 MB.
+ * Auth: required.
+ */
 app.post('/api/worldmap', requireAuth, uploadWorldMap.single('worldmap'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image received' });
   const newFile = req.file.filename;
@@ -1009,7 +1123,10 @@ app.post('/api/worldmap', requireAuth, uploadWorldMap.single('worldmap'), async 
   res.json({ url });
 });
 
-// ── Full data/ backup as zip ──────────────────────────────────
+/**
+ * GET /api/backup — Stream the entire `data/` directory as a ZIP
+ * download. Compatible input format for `/api/restore`. Auth: required.
+ */
 app.get('/api/backup', requireAuth, (_req, res) => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const filename  = `backup-${timestamp}.zip`;
@@ -1043,7 +1160,7 @@ const AdmZip = require('adm-zip');
 const restoreUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, os.tmpdir()),
-    filename:    (_req, _file, cb) => cb(null, `tiamat-restore-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`),
+    filename:    (_req, _file, cb) => cb(null, `restore-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`),
   }),
   limits: { fileSize: 50 * 1024 * 1024 },
 });
@@ -1060,6 +1177,16 @@ function _safeJoinDataDir(rel) {
   return resolved;
 }
 
+/**
+ * POST /api/restore — Replace the live `data/` directory from an
+ * uploaded backup. Accepts both formats:
+ *   - a `.zip` produced by `/api/backup` (entries under `data/...`),
+ *   - a single `.json` document in the shape `Store.exportJSON()` emits.
+ * Takes a `pre-restore` snapshot first so the operation is undoable
+ * from the Záloha tab. Every entry path is resolved through
+ * `_safeJoinDataDir` so a malicious archive cannot escape `DATA_DIR`
+ * (traversal, absolute paths, symlinks all rejected). Auth: required.
+ */
 app.post('/api/restore', requireAuth, restoreUpload.single('backup'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Žádný soubor nepřijat' });
 
@@ -1210,7 +1337,7 @@ async function _backgroundTileSweep() {
 }
 
 app.listen(PORT, () => {
-  console.log(`Tiamat running on http://localhost:${PORT}`);
+  console.log(`TTRPG Codex running on http://localhost:${PORT}`);
   // Loud warning if running with the default/insecure password. The
   // codebase is open-source so anyone can compute SHA256("123") — a
   // deployment that left EDIT_PASSWORD unset would be world-editable.

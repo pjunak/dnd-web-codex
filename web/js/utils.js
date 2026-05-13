@@ -1,9 +1,18 @@
 // ═══════════════════════════════════════════════════════════════
 //  UTILS — shared helpers used across modules.
-//  Single source for esc, escapeRe, norm, debounce, slugify,
-//  extractOutline, humanTime, renderMarkdown, expandWikiLinks.
+//  Single source for HTML/regex escaping, diacritic-insensitive
+//  normalisation, debouncing, slug+outline generation, sanitised
+//  Markdown rendering, and the [[wiki-link]] resolver hook.
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * HTML-escape a value for safe interpolation into a template literal that
+ * builds DOM. Handles `&`, `"`, `<`, `>` — use this for any user-supplied
+ * text that ends up inside an attribute value or text node.
+ *
+ * @param {*} s - Anything stringifiable; null/undefined become "".
+ * @returns {string} Escaped string safe for direct innerHTML interpolation.
+ */
 export function esc(s) {
   return String(s ?? '')
     .replace(/&/g, '&amp;')
@@ -12,11 +21,23 @@ export function esc(s) {
     .replace(/>/g, '&gt;');
 }
 
+/**
+ * Escape a string so it can be embedded literally inside a `RegExp` source.
+ *
+ * @param {*} s - Anything stringifiable.
+ * @returns {string} Source string with every regex metacharacter backslashed.
+ */
 export function escapeRe(s) {
   return String(s ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Lowercase + strip diacritics. Used for search matching ("kresava" → "Křesava"). */
+/**
+ * Lowercase + strip diacritics. Used for every diacritic-insensitive search
+ * and chip-filter match (e.g. typing "kresava" matches "Křesava").
+ *
+ * @param {*} s - Anything stringifiable.
+ * @returns {string} Lowercased, NFD-normalised, combining-marks-removed.
+ */
 export function norm(s) {
   return String(s ?? '')
     .toLowerCase()
@@ -24,6 +45,14 @@ export function norm(s) {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
+/**
+ * Trailing-edge debounce. Wraps `fn` so rapid consecutive calls collapse
+ * into one invocation `ms` milliseconds after the last call.
+ *
+ * @param {Function} fn - The function to debounce.
+ * @param {number} [ms=120] - Quiet-time before the wrapped call fires.
+ * @returns {Function} A debounced wrapper preserving `this` and arguments.
+ */
 export function debounce(fn, ms = 120) {
   let t;
   return function (...args) {
@@ -97,13 +126,28 @@ export function extractOutline(src) {
   return out;
 }
 
-// ─ Wiki-link resolver (phase 4) ──────────────────────────────────
-// `expandWikiLinks(src)` rewrites `[[Název]]` (and `[[Název|hint]]`)
-// into real markdown links to the matching entity. The resolver is
-// injected by app.js at init so utils.js stays free of Store imports.
+// ─ Wiki-link resolver ────────────────────────────────────────────
+// The resolver function is injected from `app.js` at init time so this
+// module stays free of `Store` imports and remains trivially testable.
 let _wikiResolver = null;
+
+/**
+ * Register the function that resolves a `[[Name]]` token to an entity.
+ * Called once from `app.js` during boot. The resolver receives
+ * `(label, hint)` and must return `{kind, id}` or `null`.
+ *
+ * @param {(label: string, hint: string) => ({kind: string, id: string} | null)} fn
+ */
 export function setWikiLinkResolver(fn) { _wikiResolver = fn; }
 
+/**
+ * Rewrite `[[Name]]` and `[[Name|hint]]` tokens inside `src` into real
+ * markdown links (`[label](#/kind/id)`) before `marked` parses them.
+ * Unresolved tokens render as a visibly-broken span the GM can fix.
+ *
+ * @param {*} src - Markdown source possibly containing wiki-link tokens.
+ * @returns {string} Source with tokens rewritten in place.
+ */
 export function expandWikiLinks(src) {
   const text = String(src ?? '');
   if (!text || !_wikiResolver) return text;
@@ -133,6 +177,13 @@ export function expandWikiLinks(src) {
  */
 const _mdCache    = new Map();
 const _MD_CACHE_MAX = 50;
+
+/**
+ * Drop every entry from the markdown render cache. Call whenever entity
+ * data changes — wiki-link resolution depends on the entity dataset, so
+ * cached HTML can reference stale targets after a rename or creation.
+ * `Store.load()` and the SSE refresh path call this automatically.
+ */
 export function clearMarkdownCache() { _mdCache.clear(); }
 
 export function renderMarkdown(src) {

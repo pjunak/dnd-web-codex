@@ -113,8 +113,10 @@ export const Store = (() => {
       settings:         JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)),
       // Campaign metadata stored as a keyed-object collection with a
       // single 'main' record so it round-trips through the existing
-      // PATCH handler (same shape as factions/settings).
-      campaign:         { main: { name: 'O Barvách Draků', tagline: '' } },
+      // PATCH handler (same shape as factions/settings). The default
+      // name is a neutral placeholder — users override it inline from
+      // the dashboard hero on first edit.
+      campaign:         { main: { name: 'Untitled Campaign', tagline: '' } },
       // Tombstones for default entries the user has explicitly deleted,
       // so _mergeDefaults doesn't re-seed them on next load. Keyed by
       // entity id (or `settings:<cat>:<id>` for settings tombstones).
@@ -178,22 +180,36 @@ export const Store = (() => {
       _data.campaign = {};
     }
     if (!_data.campaign.main || typeof _data.campaign.main !== 'object') {
-      _data.campaign.main = { name: 'O Barvách Draků', tagline: '' };
+      _data.campaign.main = { name: 'Untitled Campaign', tagline: '' };
     }
-    if (typeof _data.campaign.main.name    !== 'string') _data.campaign.main.name    = 'O Barvách Draků';
+    if (typeof _data.campaign.main.name    !== 'string') _data.campaign.main.name    = 'Untitled Campaign';
     if (typeof _data.campaign.main.tagline !== 'string') _data.campaign.main.tagline = '';
   }
 
-  // ── One-shot `mapStatus` → `attitudes[]` migration ────────────
-  // The old `location.mapStatus` (single value from the `mapStatuses`
-  // enum) is superseded by `location.attitudes` (array from the
-  // unified `attitudes` enum). Map the four legacy ids into the new
-  // vocabulary, drop the old field, and remove the stale settings
-  // category. Idempotent — safe to re-run.
+  // ─────────────────────────────────────────────────────────────
+  //  Schema migrations.
   //
-  // Returns `{ touchedLocations: [Location], droppedSettingsCat: bool }`
-  // so `load()` can sync each touched record individually instead of
-  // wiping the whole dataset to the server.
+  //  Each `_migrate*()` helper below MUST be idempotent — `load()`
+  //  invokes the full set on every page load, so re-running on
+  //  already-migrated data has to be a no-op.
+  //
+  //  Each helper returns the entities it touched (plus, in some
+  //  cases, flags or category ids) so `load()` can sync per-record
+  //  via the normal PATCH path. Returning `[]` / `false` means
+  //  "nothing changed; no sync needed."
+  //
+  //  When adding a new migration: hook it into `load()` in the
+  //  same order-sensitive batch (mapStatus must precede the shape
+  //  upgrade so `unknown` ids are stripped together).
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Translate the retired `location.mapStatus` field into the unified
+   * `attitudes[]` vocabulary and remove the orphan `mapStatuses` enum
+   * category from settings.
+   *
+   * @returns {{touchedLocations: Array, droppedSettingsCat: boolean}}
+   */
   function _migrateMapStatusToAttitudes() {
     if (!_data) return { touchedLocations: [], droppedSettingsCat: false };
     const touched = [];
@@ -225,13 +241,14 @@ export const Store = (() => {
     return { touchedLocations: touched, droppedSettingsCat };
   }
 
-  // ── One-shot `captured` status migration ──────────────────────
-  // Narrowed status enum to alive/dead/unknown; old `captured`
-  // characters become alive + circumstances="Zajatý/á" so the
-  // information isn't lost. Idempotent — safe to re-run.
-  //
-  // Returns the list of characters whose record changed so `load()`
-  // can sync each via the per-entity PATCH path.
+  /**
+   * Replace any remaining `status: 'captured'` characters with
+   * `alive` + a `Zajat/a` note in the free-text `circumstances` field.
+   * The narrower enum keeps the picker simple; `circumstances` is the
+   * place to record richer states.
+   *
+   * @returns {Array} Characters whose record was rewritten.
+   */
   function _migrateCapturedStatus() {
     if (!_data || !Array.isArray(_data.characters)) return [];
     const touched = [];
@@ -245,29 +262,33 @@ export const Store = (() => {
     return touched;
   }
 
-  // ── Promote attitudes to `[{id, strength}]` shape ─────────────
-  // Earlier the field was `string[]` (locations only) plus a single
-  // `attitude: string` on characters. This migration coerces both
-  // shapes into a uniform `attitudes: [{id, strength: 0..1}]` array
-  // on characters, locations and factions, and strips the legacy
-  // `unknown` id (now expressed as an empty array). Idempotent.
-  //
-  // Returns `{ characters[], locations[], factions: [{id, fac}] }` —
-  // each entry needs its own PATCH on first migration boot.
+  /**
+   * Coerce every entity's `attitudes` field into the canonical
+   * `[{id}]` shape: drop the legacy single-string `character.attitude`,
+   * upgrade legacy `string[]` arrays to objects, and strip the legacy
+   * `unknown` id (now expressed by an empty array).
+   *
+   * @returns {{characters: Array, locations: Array, factions: Array<{id:string, fac:object}>}}
+   */
   function _migrateAttitudesToObjectShape() {
     if (!_data) return { characters: [], locations: [], factions: [] };
     const out = { characters: [], locations: [], factions: [] };
 
-    // Returns a normalised array if any change is needed; null when
-    // the input is already in canonical shape (so the caller can
-    // skip a no-op sync). The canonical shape is `[{id}]` (no
-    // `strength` field — strength now lives on the `attitudes`
-    // settings enum item, see `_migrateStrengthFromEntityToEnum`).
-    // It is CRUCIAL that this normalize function does not re-add
-    // strength to entries that are already canonical, otherwise
-    // it bounces with `_migrateStrengthFromEntityToEnum` on every
-    // load and the resulting infinite SSE-driven re-render loop
-    // makes the page flicker until you force-close it.
+    // Returns a normalised array if any change is needed; null when the
+    // input is already canonical (so the caller can skip a no-op sync).
+    // Canonical shape is `[{id}]` — no `strength` field, since strength
+    // moved to the `attitudes` settings enum item itself (see
+    // `_migrateStrengthFromEntityToEnum`).
+    //
+    // ⚠ LOAD-BEARING INVARIANT: this function MUST NOT re-add `strength`
+    // to entries that are already canonical. If it does, it ping-pongs
+    // with `_migrateStrengthFromEntityToEnum` on every load — each
+    // migration sees the other's output as "non-canonical" and writes
+    // a fresh sync, which the SSE pushes back as a `data-changed`
+    // event, which triggers another load, which… The hash-dedupe in
+    // `_applyRemoteChange` cannot save you here because each cycle's
+    // payload genuinely differs (`{id:'enemy'}` ↔ `{id:'enemy', strength:1.0}`).
+    // Symptom: the page flickers continuously until the tab is closed.
     const normalize = (arr) => {
       if (!Array.isArray(arr)) return null;
       let changed = false;
@@ -338,9 +359,14 @@ export const Store = (() => {
     return out;
   }
 
-  // Drop the legacy `unknown` row from settings.attitudes — empty
-  // `attitudes` is now itself the "no stance" baseline. Tombstoned so
-  // _mergeDefaults doesn't re-seed. Idempotent.
+  /**
+   * Remove the `unknown` row from `settings.attitudes` and tombstone it
+   * so `_mergeDefaults` won't re-seed. Empty `attitudes[]` IS the new
+   * "no stance" baseline; the old explicit id was redundant and made
+   * the renderer ambiguous.
+   *
+   * @returns {boolean} `true` if the row was dropped (caller persists).
+   */
   function _dropUnknownFromAttitudesEnum() {
     if (!_data?.settings?.attitudes) return false;
     const before = _data.settings.attitudes.length;
@@ -353,13 +379,15 @@ export const Store = (() => {
     return true;
   }
 
-  // Promote pin priority (1/2/3) to size (px). The legacy
-  // priority drove visibility-by-zoom on the world map; visibility
-  // is being decoupled from priority and will move to per-Pohled
-  // rules instead. Mapping: 1→36, 2→30, 3→26 px (mirroring the new
-  // pinTypes defaults). Idempotent.
-  //
-  // Returns `{ pinTypesTouched, touchedLocations[] }`.
+  /**
+   * Replace the `priority` (1/2/3) field on every pin type and on every
+   * placed location with an explicit pixel `size`. Visibility is no
+   * longer derived from priority; it'll be a per-Pohled rule.
+   *
+   * Mapping: 1→36 px, 2→30 px, 3→26 px (mirrors the seeded defaults).
+   *
+   * @returns {{pinTypesTouched: boolean, touchedLocations: Array}}
+   */
   function _migratePinPriorityToSize() {
     if (!_data) return { pinTypesTouched: false, touchedLocations: [] };
     const SIZE_FROM_PRIORITY = { 1: 36, 2: 30, 3: 26 };
@@ -392,18 +420,18 @@ export const Store = (() => {
     return { pinTypesTouched, touchedLocations: touched };
   }
 
-  // Promote attitude `strength` from per-entity to per-enum-item.
-  // Earlier the field lived on each entity's attitude entry
-  // (`{id, strength}`) and the renderer read it back per-record. The
-  // new model puts strength on the `attitudes` settings item instead,
-  // so editing intensity in Settings updates every glow at once.
-  // Strip strength from every entity attitude entry; the renderer
-  // will look it up from `_data.settings.attitudes[id].strength`.
-  // Idempotent — re-runs find no `strength` field on any entry.
-  //
-  // Returns `{ characters[], locations[], factions: [{id, fac}] }`
-  // touched on first run so load() can sync each via the per-entity
-  // PATCH path.
+  /**
+   * Strip the `strength` field from every entity's attitude entries.
+   * Strength now lives on the `attitudes` settings enum item, so editing
+   * intensity in Settings updates every glow at once instead of having
+   * to walk every entity record.
+   *
+   * Pairs with the LOAD-BEARING INVARIANT in
+   * `_migrateAttitudesToObjectShape.normalize` — see that comment for
+   * why this migration must NOT bounce with the shape upgrade.
+   *
+   * @returns {{characters: Array, locations: Array, factions: Array<{id:string, fac:object}>}}
+   */
   function _migrateStrengthFromEntityToEnum() {
     if (!_data) return { characters: [], locations: [], factions: [] };
     const out = { characters: [], locations: [], factions: [] };
@@ -436,9 +464,13 @@ export const Store = (() => {
     return out;
   }
 
-  // Seed `strength` on `attitudes` settings items so the renderer
-  // always has a number to work with. Defaults to 1.0 when missing.
-  // Idempotent.
+  /**
+   * Ensure every `settings.attitudes` row has a numeric `strength`
+   * (defaulting to 1.0). The renderer expects a number; missing values
+   * would silently break the glow on first paint.
+   *
+   * @returns {boolean} `true` if any row was patched.
+   */
   function _seedAttitudeStrength() {
     if (!_data?.settings?.attitudes) return false;
     let touched = false;
@@ -451,10 +483,13 @@ export const Store = (() => {
     return touched;
   }
 
-  // Drop the retired `location.status` field. `locationStatuses` and
-  // its icon-variant strategy were removed because the feature was
-  // unused and the GM tracks place state in description text instead.
-  // Idempotent — returns the locations touched so load() syncs them.
+  /**
+   * Strip `location.status`. The `locationStatuses` enum and its
+   * icon-variant strategy were retired; description text is the place
+   * to record richer state.
+   *
+   * @returns {Array} Locations whose record was patched.
+   */
   function _migrateDropLocationStatus() {
     if (!_data || !Array.isArray(_data.locations)) return [];
     const touched = [];
@@ -467,9 +502,13 @@ export const Store = (() => {
     return touched;
   }
 
-  // Drop the retired `artifact.state` field. `artifactStates` was a
-  // purely cosmetic chip enum with no search/filter/icon hook, so it
-  // was removed alongside `locationStatuses`. Idempotent.
+  /**
+   * Strip `artifact.state`. The `artifactStates` enum was a cosmetic
+   * chip with no search / filter / icon hook, retired alongside
+   * `locationStatuses`.
+   *
+   * @returns {Array} Artifacts whose record was patched.
+   */
   function _migrateDropArtifactState() {
     if (!_data || !Array.isArray(_data.artifacts)) return [];
     const touched = [];
@@ -482,12 +521,15 @@ export const Store = (() => {
     return touched;
   }
 
-  // Strip retired settings categories from `_data.settings`. Pure
-  // server-side cleanup — the client has no reader for these keys
-  // any more, but they'd otherwise linger in `data/settings.json`
-  // forever. Returns the list of category ids actually removed so
-  // load() can `_sync('settings', 'delete', { id })` for each.
-  // Idempotent.
+  /**
+   * Remove the `locationStatuses` and `artifactStates` keys from
+   * `_data.settings`. Pure server-side cleanup — without this, the
+   * orphan categories would linger in `data/settings.json` forever.
+   *
+   * @returns {Array<string>} Category ids actually removed (caller
+   *                          issues one `_sync('settings', 'delete')`
+   *                          per id).
+   */
   function _migrateDropRetiredSettingsCategories() {
     if (!_data?.settings) return [];
     const RETIRED = ['locationStatuses', 'artifactStates'];
@@ -501,13 +543,15 @@ export const Store = (() => {
     return dropped;
   }
 
-  // Retire the `state` icon strategy on pinTypes. Any pinType whose
-  // iconConfig was on `state` collapses to `single` (uses the first
-  // file). Per-file `stateId` markers (used to flag the "default
-  // slot" for `single` and to key state matches for `state`) are
-  // dropped — without the state strategy, files[0] is the default,
-  // no metadata needed. Returns true if any pinType was touched so
-  // load() can persist the new settings category. Idempotent.
+  /**
+   * Collapse the retired `state` icon-strategy to `single` and strip
+   * per-file `stateId` markers on every pin type. With the `state`
+   * strategy gone, `files[0]` is the default for `single` mode so the
+   * marker metadata is no longer needed.
+   *
+   * @returns {boolean} `true` if any pin type was patched (caller
+   *                    persists the whole `pinTypes` category once).
+   */
   function _migrateRetirePinTypeStateStrategy() {
     const types = _data?.settings?.pinTypes;
     if (!Array.isArray(types)) return false;
@@ -531,6 +575,20 @@ export const Store = (() => {
     return touched;
   }
 
+  /**
+   * Fetch the full dataset from `/api/data`, merge defaults for any
+   * collection the server hasn't seeded yet, and run every idempotent
+   * schema migration. Each migration's touched records are PATCHed back
+   * individually — never as a wholesale dataset overwrite.
+   *
+   * If the server is unreachable, the in-memory dataset falls back to
+   * defaults and a `store:server-unavailable` event fires; subsequent
+   * `_sync` calls become no-ops until the page is reloaded with a
+   * working server.
+   *
+   * @returns {Promise<void>}
+   * @fires window#store:server-unavailable
+   */
   async function load() {
     try {
       const res = await fetch('/api/data');
@@ -540,9 +598,9 @@ export const Store = (() => {
         if (serverData && serverData.characters) {
           _data = serverData;
           _mergeDefaults();
-          // Idempotent data migrations. Each one returns the entities
-          // it touched so we can sync them via the per-entity PATCH
-          // path instead of POSTing the whole dataset.
+          // Migrations run in a specific order — `mapStatus` must
+          // precede the shape upgrade so the `unknown` ids it inserts
+          // get stripped together; the rest are independent.
           const capturedTouched = _migrateCapturedStatus();
           const mapStatus       = _migrateMapStatusToAttitudes();
           // Run the mapStatus → attitudes migration BEFORE the shape
@@ -598,11 +656,20 @@ export const Store = (() => {
     if (!_data) { _data = _defaults(); _reindex(); }
   }
 
-  // Serialised write queue — every PATCH waits for the previous one
-  // to settle (success, definitive failure, or auth) before sending.
-  // Preserves ordering on the wire, so a save-then-delete pair can't
-  // arrive out of order. Each request gets up to 3 attempts with
-  // exponential backoff for transient network/5xx errors.
+  // ── Serialised write queue ────────────────────────────────────
+  // Every PATCH waits for the previous one to settle (success, terminal
+  // failure, or auth bounce) before going on the wire. This preserves
+  // ordering on the server side — a save-then-delete pair can't arrive
+  // out of order, even if the second was issued before the first
+  // completed. Each request gets up to 3 attempts with exponential
+  // backoff (200 ms → 800 ms) for transient network / 5xx errors.
+  //
+  // Local mutations are NOT rolled back on terminal failure. The next
+  // page load will reconcile from the server's authoritative copy, and
+  // the `store:save-failed` banner alerts the user that a refresh is
+  // needed. Rolling back optimistically would force editors to
+  // re-discover stale form state mid-edit, which is a worse UX than
+  // the rare "your last save didn't make it" message.
   let _writeChain   = Promise.resolve();
   let _inflightCount = 0;
   function _setInflight(n) {
@@ -659,6 +726,15 @@ export const Store = (() => {
     return true;
   }
 
+  /**
+   * Upload a portrait image for a character.
+   *
+   * @param {File|Blob} file - Image file (multer accepts up to 20 MB).
+   * @param {string} charId - Character id the portrait belongs to.
+   * @returns {Promise<string>} Server-relative URL of the saved file.
+   * @throws {Error} On auth failure (also fires `store:auth-failed`)
+   *                 or any other upload error.
+   */
   async function uploadPortrait(file, charId) {
     if (!charId) throw new Error('uploadPortrait: charId is required.');
     if (!_serverAvailable) throw new Error('Server není dostupný — nelze nahrát obrázek.');
@@ -674,6 +750,15 @@ export const Store = (() => {
     throw new Error('Nahrání portrétu selhalo.');
   }
 
+  /**
+   * Upload a local map image for a location. The server saves to
+   * `data/maps/local/{locId}/map.{ext}` and schedules an async tile
+   * pyramid build via `tiler.buildFor`.
+   *
+   * @param {File|Blob} file - Image file.
+   * @param {string} locId - Location id the map belongs to.
+   * @returns {Promise<string>} Server-relative URL of the saved file.
+   */
   async function uploadLocalMap(file, locId) {
     if (!locId) throw new Error('uploadLocalMap: locId is required.');
     if (!_serverAvailable) throw new Error('Server není dostupný — nelze nahrát mapu.');
@@ -689,11 +774,20 @@ export const Store = (() => {
   }
 
   // ── Marker icon uploads ──────────────────────────────────────
-  // Per-pinType image variants live under /icons/<pinTypeId>/. The
-  // marker's strategy + per-file state assignments are stored on
-  // settings.pinTypes[i].iconConfig (an in-band field, not on disk
-  // metadata). These helpers just shuttle bytes; the editor in
-  // settings.js owns the iconConfig record.
+  // Per-pin-type image variants live under `data/icons/<pinTypeId>/`
+  // (served at `/icons/...`). The strategy + variant metadata is held
+  // in-band on `settings.pinTypes[i].iconConfig` rather than as on-
+  // disk metadata. These helpers just shuttle bytes; `settings.js`
+  // owns the iconConfig record.
+
+  /**
+   * Upload one or more marker icon variants for a pin type.
+   *
+   * @param {string} pinTypeId
+   * @param {Array<File|Blob>} files - Up to 16 SVG/PNG/JPEG/WEBP files,
+   *                                   2 MB each.
+   * @returns {Promise<{files: Array<{id: string, url: string, name: string}>}>}
+   */
   async function uploadIcons(pinTypeId, files) {
     if (!pinTypeId) throw new Error('uploadIcons: pinTypeId is required.');
     if (!_serverAvailable) throw new Error('Server není dostupný — nelze nahrát ikony.');
@@ -749,15 +843,26 @@ export const Store = (() => {
       .catch(e => console.warn('Store: portrait delete failed.', e));
   }
 
+  /** @returns {Array} The live characters array (mutate via `saveCharacter`). */
   function getCharacters()    { init(); return _data.characters; }
+  /** @returns {Array} The live relationships array. */
   function getRelationships() { init(); return _data.relationships; }
+  /** @returns {Array} The live locations array. */
   function getLocations()     { init(); return _data.locations; }
+  /** @returns {Array} The live events array. */
   function getEvents()        { init(); return _data.events; }
+  /** @returns {Array} The live mysteries array. */
   function getMysteries()     { init(); return _data.mysteries; }
+  /** @returns {Object} The live factions keyed-object map. */
   function getFactions()      { init(); return _data.factions; }
+  /** @param {string} id - Faction id. @returns {object|null} */
   function getFaction(id)     { return getFactions()[id] || null; }
-  // Pull status map live from user-editable settings, falling back
-  // to SETTINGS_DEFAULTS.characterStatuses if settings haven't loaded yet.
+
+  /**
+   * @returns {Object<string, object>} Status id → record map, sourced
+   *   live from `settings.characterStatuses` with a defaults fallback
+   *   for the brief window before settings have loaded.
+   */
   function getStatusMap() {
     const arr = (_data?.settings?.characterStatuses) || SETTINGS_DEFAULTS.characterStatuses;
     return Object.fromEntries(arr.map(s => [s.id, s]));
@@ -769,10 +874,15 @@ export const Store = (() => {
   function getBuh(id)         { return getPantheon().find(g => g.id === id) || null; }
   function getArtifact(id)    { return getArtifacts().find(a => a.id === id) || null; }
 
-  // Locations with map coordinates set. `parentId=null` returns only
-  // top-level places (on the world map). Pass a parentId to get the
-  // places placed on that parent's local map. Falsy/unset parentId
-  // on a location means "on the world map".
+  /**
+   * Locations with map coordinates set. Falsy `parentId` means "on the
+   * world map"; pass a location id to get the places pinned on that
+   * location's local sub-map.
+   *
+   * @param {string|null} parentId
+   * @returns {Array} Locations where `x`/`y` are numeric and the
+   *                  `parentId` matches.
+   */
   function getLocationsOnMap(parentId) {
     init();
     const p = parentId || null;
@@ -781,11 +891,24 @@ export const Store = (() => {
       && (l.parentId || null) === p
     );
   }
-  // All children of a parent location (whether placed on its map or not).
+  /**
+   * All locations whose `parentId` is `parentId`, regardless of whether
+   * they're placed on a map. Useful for hierarchy / breadcrumb UI.
+   *
+   * @param {string} parentId
+   * @returns {Array}
+   */
   function getSubLocations(parentId) {
     init(); return _idxChildLocations.get(parentId) || [];
   }
-  // Walk parentId chain up from a location (closest-first).
+
+  /**
+   * Walk the `parentId` chain upward from a location, closest-first.
+   * Cycle-guarded so a misconfigured parent loop terminates cleanly.
+   *
+   * @param {string} locId - Starting location id.
+   * @returns {Array} Ancestors, ordered immediate-parent → root.
+   */
   function getAncestorLocations(locId) {
     init();
     const chain = [];
@@ -801,9 +924,13 @@ export const Store = (() => {
     return chain;
   }
 
+  /** @param {string} id @returns {object|null} */
   function getCharacter(id) { return getCharacters().find(c => c.id === id) || null; }
+  /** @param {string} id @returns {object|null} */
   function getLocation(id)  { return getLocations().find(l => l.id === id) || null; }
+  /** @param {string} id @returns {object|null} */
   function getEvent(id)     { return getEvents().find(e => e.id === id) || null; }
+  /** @param {string} id @returns {object|null} */
   function getMystery(id)   { return getMysteries().find(m => m.id === id) || null; }
 
   // Stamp the entity with a last-modified timestamp. Used by the
@@ -865,6 +992,14 @@ export const Store = (() => {
     return true;
   }
 
+  /**
+   * Upsert a character by id. Stamps `updatedAt`, rebuilds the
+   * character indices, and queues a PATCH to the server.
+   *
+   * @param {object} char - Full character record (id required).
+   * @returns {boolean} `true` if a server sync was queued; `false`
+   *                    when offline (local mutation still applied).
+   */
   function saveCharacter(char) {
     init();
     _stamp(char);
@@ -874,6 +1009,16 @@ export const Store = (() => {
     return _sync('characters', 'save', char);
   }
 
+  /**
+   * Delete a character. Snapshots the record + its incident
+   * relationships into the session-only trash (recoverable via
+   * `undelete`), strips the id from every event/mystery `characters[]`,
+   * removes its relationships, deletes its portrait file if any, and
+   * tombstones the id when it was a default seed.
+   *
+   * @param {string} id
+   * @returns {boolean} See `saveCharacter`.
+   */
   function deleteCharacter(id) {
     init();
     const char = _data.characters.find(c => c.id === id);
@@ -929,6 +1074,15 @@ export const Store = (() => {
     return _sync('relationships', 'delete', { source, target, type });
   }
 
+  /**
+   * Upsert a location by id. Maintains undirected `connections[]`
+   * symmetry: every add/remove diff is mirrored onto the peer
+   * location, and every touched peer gets its own PATCH so the server
+   * persists both ends of the change.
+   *
+   * @param {object} loc - Full location record (id required).
+   * @returns {boolean} See `saveCharacter`.
+   */
   function saveLocation(loc) {
     init();
     _stamp(loc);
@@ -937,9 +1091,8 @@ export const Store = (() => {
     if (idx >= 0) _data.locations[idx] = loc; else _data.locations.push(loc);
 
     // Connection symmetry. `connections[]` is undirected — if A lists B,
-    // B should list A. Diff old vs new and mirror every add/remove onto
-    // the touched peer. Touched peers get their own _sync call so the
-    // server sees both ends of the change.
+    // B must list A. Diff old vs new and mirror every add/remove onto
+    // the peer; each touched peer is then synced individually.
     const oldSet   = new Set((before?.connections) || []);
     const newSet   = new Set(loc.connections      || []);
     const added    = [...newSet].filter(x => !oldSet.has(x));
@@ -976,15 +1129,23 @@ export const Store = (() => {
     return ok;
   }
 
+  /**
+   * Delete a location. Cascade: snapshots into trash, strips the dead
+   * id from every peer's `connections[]`, clears `parentId` on any
+   * child that pointed at it, and syncs each touched peer individually.
+   *
+   * @param {string} id
+   * @returns {boolean} See `saveCharacter`.
+   */
   function deleteLocation(id) {
     init();
     const loc = _data.locations.find(l => l.id === id);
     if (loc) _trash.set(_trashKey('locations', id), { kind:'locations', entity: JSON.parse(JSON.stringify(loc)) });
     _data.locations = _data.locations.filter(l => l.id !== id);
 
-    // Cascade: strip the deleted id from every peer's connections[],
-    // and clear parentId on any child that pointed at it. Touched peers
-    // get their own _sync so the server persists both sides.
+    // Strip the dead id from every peer's connections[]; clear parentId
+    // on any child that pointed at it; every touched peer is then
+    // synced individually so the server persists both sides.
     const touched = [];
     for (const l of _data.locations) {
       let changed = false;
@@ -1091,15 +1252,26 @@ export const Store = (() => {
   }
 
   // ── Campaign metadata (dashboard hero) ────────────────────────
-  // Keyed-object collection with a single 'main' record. Round-trips
-  // through the existing PATCH handler the same way factions do:
-  // PATCH {type:'campaign', action:'save', payload:{id:'main', data:{…}}}
+  // Keyed-object collection with a single `main` record (matches the
+  // factions PATCH shape on the wire: `{type, action, payload:{id,data}}`).
   // On disk it's just `{ "main": { name, tagline } }`.
+
+  /**
+   * @returns {{name: string, tagline: string}} Campaign metadata, with
+   *   defaults substituted when a field is missing.
+   */
   function getCampaign() {
     init();
     const c = (_data.campaign && _data.campaign.main) || {};
-    return { name: c.name || 'O Barvách Draků', tagline: c.tagline || '' };
+    return { name: c.name || 'Untitled Campaign', tagline: c.tagline || '' };
   }
+
+  /**
+   * Merge `patch` over the current campaign metadata and persist.
+   *
+   * @param {Partial<{name: string, tagline: string}>} patch
+   * @returns {boolean} See `saveCharacter`.
+   */
   function setCampaign(patch) {
     init();
     if (!_data.campaign || typeof _data.campaign !== 'object') _data.campaign = {};
@@ -1560,6 +1732,17 @@ export const Store = (() => {
       .slice(0, limit);
   }
 
+  /**
+   * Generate a unique entity id from a human name. The id is a
+   * diacritic-stripped slug PLUS a 6-char base36 random suffix \u2014
+   * `frulam_mondath_a7b3c9`. Renaming an entity never changes its id
+   * (so wiki-links survive); two entities with the same name still
+   * get distinct keys (so saves don't silently overwrite). Existing
+   * records keep whatever id they were originally created with.
+   *
+   * @param {string} name
+   * @returns {string}
+   */
   function generateId(name) {
     const base = String(name || '')
       .toLowerCase()
@@ -1571,6 +1754,13 @@ export const Store = (() => {
     return (base || 'e') + '_' + suffix;
   }
 
+  /**
+   * Serialise the entire dataset to a JSON string, suitable for
+   * `/api/restore` upload or out-of-band backup. Includes every
+   * collection plus the `deletedDefaults` tombstone map.
+   *
+   * @returns {string}
+   */
   function exportJSON() {
     init();
     const ts = new Date().toLocaleString('cs-CZ');
