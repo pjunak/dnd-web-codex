@@ -259,16 +259,23 @@ export const EditTemplates = (() => {
               <div class="edit-row-2">
                 <div class="edit-field">
                   <label class="edit-label">Frakce</label>
-                  <select class="edit-select" id="ef-faction-${uid}">${fOpts}</select>
+                  <select class="edit-select" id="ef-faction-${uid}"
+                    ${dataOn('change', 'EditMode.onCharacterFactionChange', uid, '$value')}>${fOpts}</select>
                 </div>
                 <div class="edit-field">
                   <label class="edit-label">Status</label>
                   <select class="edit-select" id="ef-status-${uid}">${sOpts}</select>
                 </div>
               </div>
-              <div class="edit-field">
-                <label class="edit-label" title="Jak se postava staví k partě a s jakou intenzitou">Postoje k partě <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">— prázdné = převezme od frakce</span></label>
-                ${attitudeChipRowHtml}
+              <!-- NPC-only fields. Gated on Store.isPartyMember(c). When adding
+                   new fields that don't apply to PCs (e.g. anything about
+                   stance / outside perception / knowledge), add them inside
+                   this wrapper so they participate in the same toggle. -->
+              <div id="ef-npc-only-${uid}" style="${Store.isPartyMember(c) ? 'display:none' : ''}">
+                <div class="edit-field">
+                  <label class="edit-label" title="Jak se postava staví k partě a s jakou intenzitou">Postoje k partě <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">— prázdné = převezme od frakce</span></label>
+                  ${attitudeChipRowHtml}
+                </div>
               </div>
               <div class="edit-row-3">
                 <div class="edit-field">

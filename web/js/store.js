@@ -464,6 +464,26 @@ export const Store = (() => {
     return out;
   }
 
+  /** PCs always render with the `party` palette via the faction
+   *  shortcut in getEffectiveAttitudes; their own `attitudes[]` field
+   *  is dead data. Strip it so saved records match reality.
+   *  Idempotent: only emits when the array is non-empty. Must run
+   *  after `_migrateStrengthFromEntityToEnum` so we don't double-
+   *  touch a record being normalised by both passes. */
+  function _migratePartyAttitudesEmpty() {
+    if (!_data) return { characters: [] };
+    const out = [];
+    for (const c of (_data.characters || [])) {
+      if (isPartyMember(c)
+          && Array.isArray(c.attitudes)
+          && c.attitudes.length > 0) {
+        c.attitudes = [];
+        out.push(c);
+      }
+    }
+    return { characters: out };
+  }
+
   /**
    * Ensure every `settings.attitudes` row has a numeric `strength`
    * (defaulting to 1.0). The renderer expects a number; missing values
@@ -613,6 +633,7 @@ export const Store = (() => {
           const droppedSettingsCats = _migrateDropRetiredSettingsCategories();
           const pinStrategyTouched = _migrateRetirePinTypeStateStrategy();
           const strengthMigrated = _migrateStrengthFromEntityToEnum();
+          const partyAtts       = _migratePartyAttitudesEmpty();
           const strengthSeeded  = _seedAttitudeStrength();
           for (const c of capturedTouched)            _sync('characters', 'save', c);
           for (const l of mapStatus.touchedLocations) _sync('locations', 'save', l);
@@ -629,6 +650,7 @@ export const Store = (() => {
           for (const c of strengthMigrated.characters) _sync('characters', 'save', c);
           for (const l of strengthMigrated.locations)  _sync('locations',  'save', l);
           for (const { id, fac } of strengthMigrated.factions) _sync('factions', 'save', { id, data: fac });
+          for (const c of partyAtts.characters)        _sync('characters', 'save', c);
           for (const l of pinSize.touchedLocations)   _sync('locations', 'save', l);
           for (const l of droppedLocStat)             _sync('locations', 'save', l);
           for (const a of droppedArtStat)             _sync('artifacts', 'save', a);
@@ -845,6 +867,30 @@ export const Store = (() => {
 
   /** @returns {Array} The live characters array (mutate via `saveCharacter`). */
   function getCharacters()    { init(); return _data.characters; }
+
+  /** Is this entity a player-party PC? The canonical seam for any
+   *  code that needs to treat PCs differently from NPCs. Today this
+   *  is just a faction check; tomorrow it may also look at a
+   *  dedicated `isPC` field or similar. Callers should NOT inline
+   *  `c.faction === PARTY_FACTION_ID` — route through here. */
+  function isPartyMember(c) {
+    return !!(c && c.faction === PARTY_FACTION_ID);
+  }
+
+  /** PCs only. Sorted by Czech locale to match dashboard / /parta. */
+  function getPartyMembers() {
+    return getCharacters()
+      .filter(isPartyMember)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'cs'));
+  }
+
+  /** Everyone except PCs. Use this anywhere `/postavy`-style "wider
+   *  roster" semantics apply. Returns an unsorted array — callers
+   *  apply their own sort. */
+  function getNPCs() {
+    return getCharacters().filter(c => !isPartyMember(c));
+  }
+
   /** @returns {Array} The live relationships array. */
   function getRelationships() { init(); return _data.relationships; }
   /** @returns {Array} The live locations array. */
@@ -1308,7 +1354,7 @@ export const Store = (() => {
    *  `kind` is one of `'character'`, `'location'`, `'faction'`. */
   function getEffectiveAttitudes(entity, kind) {
     if (!entity) return [];
-    if (kind === 'character' && entity.faction === PARTY_FACTION_ID) {
+    if (kind === 'character' && isPartyMember(entity)) {
       return [{ id: 'party', strength: 1.0 }];
     }
     const own = Array.isArray(entity.attitudes) ? entity.attitudes : [];
@@ -1786,7 +1832,8 @@ export const Store = (() => {
     load, init,
     uploadPortrait, deletePortrait, uploadLocalMap,
     uploadIcons, deleteIcon, deleteIcons,
-    getCharacters, getRelationships, getLocations, getEvents, getMysteries,
+    getCharacters, isPartyMember, getPartyMembers, getNPCs,
+    getRelationships, getLocations, getEvents, getMysteries,
     getFactions, getFaction, getStatusMap,
     getCharacter, getLocation, getEvent, getMystery,
     getSpecies, getPantheon, getArtifacts,

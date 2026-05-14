@@ -337,7 +337,7 @@ export const Wiki = (() => {
   function renderDashboard() {
     const editing  = EditMode.isActive();
     const campaign = Store.getCampaign();
-    const party    = Store.getCharacters().filter(c => c.faction === PARTY_FACTION_ID);
+    const party    = Store.getPartyMembers();
 
     return `
       ${_dashHeroHtml(campaign, editing)}
@@ -543,10 +543,9 @@ export const Wiki = (() => {
   // the faction filter-bar selection (orthogonal to text search).
   function _postavyApply(filterFaction) {
     const s = _listState.postavy;
-    // Party is included now — PCs share the Postavy list with NPCs.
-    // The dashboard's party strip is the at-a-glance view; this list is
-    // the full roster with filtering and grouping.
-    let chars = Store.getCharacters().slice();
+    // /postavy is the NPC roster — PCs live on the dashboard's "Naše
+    // parta" strip and at /parta. Filter via Store.getNPCs().
+    let chars = Store.getNPCs();
     if (s.values && s.values.length) {
       chars = chars.filter(c => _matchAll(s.values,
         `${c.name||''} ${c.title||''} ${(c.tags||[]).join(' ')} ${c.description||''} ${c.species||''} ${c.gender||''}`));
@@ -636,7 +635,7 @@ export const Wiki = (() => {
     _persistListState();
 
     const factions = Store.getFactions();
-    const allChars = Store.getCharacters();
+    const allChars = Store.getNPCs();
 
     // Truly-empty collection (not just filtered) → onboarding card.
     if (allChars.length === 0) {
@@ -650,8 +649,8 @@ export const Wiki = (() => {
         })}`;
     }
 
-    // Faction filter chips — party is now part of the list, so its
-    // chip appears here too when any PCs exist.
+    // Faction filter chips. PCs are excluded from `allChars` (see above),
+    // so the `party` chip naturally drops out via the count-0 guard.
     const factionFilters = Object.entries(factions).map(([id, f]) => {
       const count = allChars.filter(c => c.faction === id).length;
       if (count === 0) return "";
@@ -1549,9 +1548,7 @@ export const Wiki = (() => {
   //  because party members are always fully known to themselves.
   // ══════════════════════════════════════════════════════════════
   function renderPartyList() {
-    const party = Store.getCharacters()
-      .filter(c => c.faction === PARTY_FACTION_ID)
-      .sort((a, b) => _czCompare(a.name, b.name));
+    const party = Store.getPartyMembers();
 
     if (party.length === 0) {
       return `

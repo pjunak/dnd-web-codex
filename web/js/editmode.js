@@ -575,6 +575,10 @@ export const EditMode = (() => {
       known:       _dynVals(`dyn-known-${uid}`),
       unknown:     _dynVals(`dyn-unknown-${uid}`),
     };
+    // PCs always render with the `party` palette via the faction
+    // shortcut in Store.getEffectiveAttitudes — their own attitudes[]
+    // is dead data. Strip it so the record stays clean.
+    if (Store.isPartyMember(next)) next.attitudes = [];
     // Defensive: if a pre-migration record still carries the legacy
     // singular `attitude` field, scrub it out now that we always
     // write the array form.
@@ -912,9 +916,7 @@ export const EditMode = (() => {
   function addPartyToEvent(mountId) {
     const el = document.getElementById(mountId);
     if (!el || !el._multiselect) { _toast("Widget nepřipraven", false); return; }
-    const partyIds = Store.getCharacters()
-      .filter(c => c.faction === PARTY_FACTION_ID)
-      .map(c => c.id);
+    const partyIds = Store.getPartyMembers().map(c => c.id);
     if (!partyIds.length) { _toast("Parta je prázdná", false); return; }
     const current = el._multiselect.getValue();
     const merged  = Array.from(new Set([...current, ...partyIds]));
@@ -1042,6 +1044,19 @@ export const EditMode = (() => {
       other.style.display = 'none';
       other.value = '';
     }
+  }
+
+  // ── Faction-change reveal: hide NPC-only fields for PCs ───────
+  // Wired via dataOn('change', …) on the faction <select>. The
+  // wrapped block (#ef-npc-only-${uid}) holds every field that
+  // doesn't apply to party PCs — today just the "Postoje k partě"
+  // chip row. Future stance/perception fields slot into the same
+  // wrapper. Save-time stripping in `saveCharacter` handles the
+  // data; this handler is purely about the visible form.
+  function onCharacterFactionChange(uid, value) {
+    const block = document.getElementById(`ef-npc-only-${uid}`);
+    if (!block) return;
+    block.style.display = (value === PARTY_FACTION_ID) ? 'none' : '';
   }
 
   // ── EasyMDE mount ─────────────────────────────────────────────
@@ -1309,7 +1324,7 @@ export const EditMode = (() => {
     clearPortrait, updateKnowledgeLabel,
     handlePortraitChange, handleLocalMapChange,
     addRankChain, addRankRow,
-    saveCharacter, deleteCharacter, onGenderChange,
+    saveCharacter, deleteCharacter, onGenderChange, onCharacterFactionChange,
     addRelationship, updateRelationship, deleteRelationship, relTypeChanged,
     saveLocation, deleteLocation, uploadLocalMap,
     saveEvent, deleteEvent, addPartyToEvent,
