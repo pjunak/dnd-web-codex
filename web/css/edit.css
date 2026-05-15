@@ -65,12 +65,13 @@ body.edit-mode::after {
 .edit-mode .edit-only-btn { display: block; }
 
 /* ── Role-aware UI ────────────────────────────────────────────── */
-/* Edit mode toggle is DM-only. Hidden for player + anonymous roles.
-   Role.refresh() stamps body.is-dm on boot so non-DM users never
-   see the toggle even before they try to click it. */
-body:not(.is-dm) .edit-mode-toggle { display: none; }
+/* Edit mode toggle is hidden for users who already chose a role
+   that doesn't have edit access (i.e. logged-in players). Anonymous
+   visitors still see it — clicking acts as a login affordance and
+   prompts for the DM password. DMs see it as the normal edit toggle. */
+body.is-player .edit-mode-toggle { display: none; }
 /* The settings (⚙ Nastavení) link is only useful when you can edit
-   enums; hide for non-DM. */
+   enums; hide for everyone but DM. */
 body:not(.is-dm) .sidebar-export-btn { display: none; }
 
 /* DM-only sidebar section — hidden for everyone but DM. */

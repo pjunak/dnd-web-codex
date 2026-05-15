@@ -27,20 +27,17 @@ export const Role = (() => {
   let _loaded   = false;
 
   async function refresh() {
+    let role = null, realRole = null;
     try {
       const res = await fetch('/api/auth', { credentials: 'same-origin' });
-      if (!res.ok) {
-        _role = null; _realRole = null;
-      } else {
+      if (res.ok) {
         const data = await res.json();
-        _role     = data.role     || null;
-        _realRole = data.realRole || null;
+        role     = data.role     || null;
+        realRole = data.realRole || null;
       }
-    } catch (_) {
-      _role = null; _realRole = null;
-    }
+    } catch (_) { /* swallow — role stays null */ }
     _loaded = true;
-    _applyBodyClasses();
+    _setRole(role, realRole);   // fires `role:changed` only if it actually changed
     return { role: _role, realRole: _realRole };
   }
 
@@ -63,6 +60,23 @@ export const Role = (() => {
   function isImpersonating() { return _role !== _realRole && _realRole === 'dm'; }
   function isLoaded()        { return _loaded; }
 
+  // Update _role / _realRole, restamp body classes, and fire
+  // `role:changed` if anything actually changed. Used by every state
+  // transition below so subscribers (sidebar badge, data refetch) get
+  // a single signal regardless of which API was called.
+  function _setRole(role, realRole) {
+    const changed = (_role !== role) || (_realRole !== realRole);
+    _role = role; _realRole = realRole;
+    _applyBodyClasses();
+    if (changed) {
+      try {
+        window.dispatchEvent(new CustomEvent('role:changed', {
+          detail: { role: _role, realRole: _realRole },
+        }));
+      } catch (_) {}
+    }
+  }
+
   /** Switch the effective role to 'player' (DM only). Server re-issues
    *  the cookie with realRole='dm' preserved so we can flip back
    *  without re-entering the password. Returns the new role on success. */
@@ -72,9 +86,7 @@ export const Role = (() => {
       const res = await fetch('/api/view-as', { method: 'POST', credentials: 'same-origin' });
       if (!res.ok) return null;
       const data = await res.json();
-      _role     = data.role     || null;
-      _realRole = data.realRole || null;
-      _applyBodyClasses();
+      _setRole(data.role || null, data.realRole || null);
       return _role;
     } catch (_) { return null; }
   }
@@ -86,9 +98,7 @@ export const Role = (() => {
       const res = await fetch('/api/view-as-dm', { method: 'POST', credentials: 'same-origin' });
       if (!res.ok) return null;
       const data = await res.json();
-      _role     = data.role     || null;
-      _realRole = data.realRole || null;
-      _applyBodyClasses();
+      _setRole(data.role || null, data.realRole || null);
       return _role;
     } catch (_) { return null; }
   }
@@ -98,8 +108,7 @@ export const Role = (() => {
     try {
       await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
     } catch (_) {}
-    _role = null; _realRole = null;
-    _applyBodyClasses();
+    _setRole(null, null);
   }
 
   return {

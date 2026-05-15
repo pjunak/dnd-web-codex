@@ -625,26 +625,30 @@ document.addEventListener('error',    (ev) => {
     document.body.prepend(banner);
   }
 
-  // Re-render the badge after Role.viewAsPlayer / Role.backToDM
-  // complete. Both methods are called from action-dispatcher buttons;
-  // they finish async and update the cached role, but don't repaint
-  // the badge themselves. Hook a window event for that.
-  // The simplest way: monkey-patch Role.viewAsPlayer / backToDM to
-  // refresh the badge on resolution. Done via a small wrapper here
-  // so role.js stays UI-free.
-  const _wrap = (orig) => async function (...args) {
-    const r = await orig.apply(this, args);
-    _renderRoleBadge();
-    // The dataset the client holds was fetched under the previous
-    // role. After a role flip we must refetch and re-render to apply
-    // the new server-side filter.
-    await Store.load();
-    navigate(getRoute());
-    return r;
-  };
-  Role.viewAsPlayer = _wrap(Role.viewAsPlayer);
-  Role.backToDM     = _wrap(Role.backToDM);
-  Role.logout       = _wrap(Role.logout);
+  // The dataset the client holds was fetched under the previous role.
+  // After a role flip (login from editmode, view-as toggle, logout)
+  // we must refetch the data and re-render so the new server-side
+  // filter takes effect. Role.refresh fires `role:changed` whenever
+  // its cached state actually changes, so this listener covers every
+  // pathway in one place. Cosmetic UI (the sidebar badge + the
+  // impersonation banner) goes here too.
+  let _roleChangeInflight = false;
+  window.addEventListener('role:changed', async () => {
+    if (_roleChangeInflight) return;     // protect against re-entry while await Store.load() runs
+    _roleChangeInflight = true;
+    try {
+      _renderRoleBadge();
+      await Store.load();
+      Settings.applySidebarVisibility();
+      navigate(getRoute());
+    } finally {
+      _roleChangeInflight = false;
+    }
+  });
+  // Role.viewAsPlayer / backToDM / logout all internally call refresh
+  // via dispatching `role:changed`. We don't need to wrap them — but
+  // they do return new state directly, which keeps the data-action
+  // call sites simple (`data-action="Role.viewAsPlayer"` just works).
 
   window.addEventListener("DOMContentLoaded", async () => {
     // Resolve the caller's role first — Settings.applySidebarVisibility
