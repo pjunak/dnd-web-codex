@@ -354,12 +354,13 @@ export const EditMode = (() => {
     }
 
     if (!_active) {
-      // Edit mode is DM-only. Players and anonymous visitors are
-      // prompted for the DM password. The login endpoint accepts
-      // either the DM or player password; we route the result based
-      // on the returned role.
-      if (!Role.isDM()) {
-        const pwd = await _passwordPrompt('Editace je dostupná pouze DM. Zadej DM heslo:');
+      // Edit mode is available to both DMs and players. Anonymous
+      // visitors are prompted for a password; either the DM or the
+      // player password is accepted, and the role baked into the
+      // cookie reflects which matched. Already-authed users (DM or
+      // player) skip the prompt and just toggle.
+      if (Role.isAnonymous()) {
+        const pwd = await _passwordPrompt('Pro editaci se přihlas (DM nebo hráčské heslo):');
         if (!pwd) return;
         try {
           const res = await fetch('/api/login', {
@@ -372,15 +373,10 @@ export const EditMode = (() => {
             _toast('Špatné heslo', false);
             return;
           }
-          const data = await res.json().catch(() => ({}));
-          // Refresh the cached role so body.is-dm is set and the
-          // rest of the UI can branch correctly before re-render.
+          // Refresh the cached role so body.is-dm / is-player are set
+          // and the rest of the UI can branch correctly before re-render.
           await Role.refresh();
-          if (data.role !== 'dm') {
-            _toast('Toto heslo neumožňuje úpravy', false);
-            return;
-          }
-          _toast('Přístup povolen ✓');
+          _toast(Role.isDM() ? 'DM přístup ✓' : 'Hráčský přístup ✓');
         } catch (e) {
           console.warn(e);
           _toast('Chyba při přihlášení', false);
@@ -1113,26 +1109,6 @@ export const EditMode = (() => {
   // this, navigating between editor pages a few dozen times noticeably
   // slows the entire app because each leaked instance still receives
   // every captured-phase document event.
-  // Wrap the current CodeMirror selection in `[<name>]…[/<name>]`.
-  // If there's no selection, just insert the empty pair and place
-  // the caret between them so the user can start typing immediately.
-  // Used by the 🔒 secret / 👁 public-island toolbar buttons.
-  function _wrapSelectionWithMarker(mde, name) {
-    if (!mde || !mde.codemirror) return;
-    const cm = mde.codemirror;
-    const open  = `[${name}]`;
-    const close = `[/${name}]`;
-    const sel = cm.getSelection();
-    if (sel && sel.length > 0) {
-      cm.replaceSelection(`${open}${sel}${close}`);
-    } else {
-      const cur = cm.getCursor();
-      cm.replaceRange(`${open}${close}`, cur);
-      cm.setCursor({ line: cur.line, ch: cur.ch + open.length });
-    }
-    cm.focus();
-  }
-
   const _mountedEasyMDE = new Set();
   function _cleanupOrphanedEasyMDE() {
     for (const mde of _mountedEasyMDE) {
@@ -1181,21 +1157,6 @@ export const EditMode = (() => {
             'heading-1', 'heading-2', 'heading-3', '|',
             'quote', 'unordered-list', 'ordered-list', '|',
             'link', 'image', 'table', 'code', 'horizontal-rule', '|',
-            {
-              name:  'secret',
-              action: (e) => _wrapSelectionWithMarker(e, 'secret'),
-              className: 'fa fa-lock',
-              title: 'Označit jako jen pro DM (Ctrl+Shift+S)',
-              text:  '🔒',
-            },
-            {
-              name:  'public-island',
-              action: (e) => _wrapSelectionWithMarker(e, 'public'),
-              className: 'fa fa-eye',
-              title: 'Viditelné i pro hráče v DM-only záznamu',
-              text:  '👁',
-            },
-            '|',
             'preview', 'side-by-side', 'fullscreen', '|',
             'undo', 'redo', '|',
             'guide',
@@ -1392,6 +1353,41 @@ export const EditMode = (() => {
     window.location.hash = '#/historie';
   }
 
+  // ── Twin operations (DM-only) ──────────────────────────────────
+  // Thin wrappers around Store.linkTwin that surface a toast and
+  // navigate to the new twin on create. The data-action dispatcher
+  // calls these with (collection, sourceId) from the editor buttons
+  // injected by EditTemplates._dmSection. Each route maps to its
+  // own wiki path prefix; the map below is the inverse of
+  // KIND_ROUTE in app.js so this module stays standalone.
+  const _TWIN_ROUTE = {
+    characters:       'postava',
+    locations:        'misto',
+    events:           'udalost',
+    mysteries:        'zahada',
+    factions:         'frakce',
+    species:          'druh',
+    pantheon:         'buh',
+    artifacts:        'artefakt',
+    historicalEvents: 'historicka-udalost',
+  };
+  async function createTwin(collection, sourceId) {
+    if (_dirty && !confirm('Máš neuložené změny v editoru. Pokračovat?')) return;
+    const r = await Store.linkTwin('create', collection, sourceId);
+    if (!r.ok) { _toast(r.error || 'Vytvoření twinu selhalo', false); return; }
+    _toast('✓ Twin vytvořen');
+    const route = _TWIN_ROUTE[collection];
+    if (route && r.twinId) _refreshTo(`#/${route}/${r.twinId}`);
+  }
+  async function unlinkTwin(collection, sourceId) {
+    if (!confirm('Opravdu odpárovat twin? Obě entity zůstanou, jen se zruší jejich propojení.')) return;
+    const r = await Store.linkTwin('unlink', collection, sourceId);
+    if (!r.ok) { _toast(r.error || 'Odpárování selhalo', false); return; }
+    _toast('Twin odpárován');
+    // Stay on current entity; the SSE refresh re-renders it.
+    window.dispatchEvent(new Event('hashchange'));
+  }
+
   // ── Public API ─────────────────────────────────────────────────
   return {
     isActive, toggle, isDirty,
@@ -1409,6 +1405,7 @@ export const EditMode = (() => {
     saveBuh, deleteBuh,
     saveArtifact, deleteArtifact,
     saveHistoricalEvent, deleteHistoricalEvent,
+    createTwin, unlinkTwin,
     mountEasyMDE,
     toast: _toast,
     renderCharacterEditor,

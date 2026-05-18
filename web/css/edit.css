@@ -65,14 +65,22 @@ body.edit-mode::after {
 .edit-mode .edit-only-btn { display: block; }
 
 /* ── Role-aware UI ────────────────────────────────────────────── */
-/* Edit mode toggle is hidden for users who already chose a role
-   that doesn't have edit access (i.e. logged-in players). Anonymous
-   visitors still see it — clicking acts as a login affordance and
-   prompts for the DM password. DMs see it as the normal edit toggle. */
-body.is-player .edit-mode-toggle { display: none; }
-/* The settings (⚙ Nastavení) link is only useful when you can edit
-   enums; hide for everyone but DM. */
+/* Edit mode toggle is visible to everyone — DMs and players both
+   have edit access, and anonymous visitors get a login prompt when
+   they click it. Only specific DM tools below are role-gated.    */
+
+/* Settings (⚙ Nastavení) edits the shared enum vocabulary —
+   attitudes, pin types, character statuses, etc. — which affects
+   every map glow and chip globally. DM-only. */
 body:not(.is-dm) .sidebar-export-btn { display: none; }
+
+/* DM-only visibility editor section inside every entity form. The
+   per-form Viditelnost select + secret-field toggles are operating
+   on entity-level visibility and DM-only fields — concepts players
+   don't have access to. CSS-hide rather than conditional rendering
+   so the structural ids stay stable for the server-side defaults
+   path; player saves still go through _sanitizePlayerEntity. */
+body:not(.is-dm) .visibility-section { display: none; }
 
 /* DM-only sidebar section — hidden for everyone but DM. */
 body:not(.is-dm) .sidebar-section-dm,
@@ -167,7 +175,11 @@ body:not(.is-dm) .sidebar-nav-dm { display: none; }
 /* Push main content down so it isn't hidden under the banner. */
 body.is-impersonating { padding-top: 36px; }
 
-/* ── Visibility editor section ────────────────────────────────── */
+/* ── DM section (visibility + twin link) ──────────────────────── */
+/* DM-only block at the bottom of every entity editor. Marked with
+   a faint red accent to signal "this affects what players see".
+   The class name stayed `visibility-section` for back-compat with
+   the body.is-dm CSS gate above. */
 .visibility-section {
   border-left: 3px solid rgba(180,40,40,0.35);
   padding-left: 1rem;
@@ -178,26 +190,44 @@ body.is-impersonating { padding-top: 36px; }
 .visibility-section .edit-section-title {
   color: #f88;
 }
-.secret-fields-row {
+.dm-twin-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.6rem;
-  margin-top: 0.4rem;
-}
-.secret-field-toggle {
-  display: inline-flex;
+  gap: 0.5rem;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.25rem 0.55rem;
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 999px;
-  font-size: 0.8rem;
-  cursor: pointer;
-  background: rgba(0,0,0,0.15);
+  margin-top: 0.3rem;
 }
-.secret-field-toggle:hover { border-color: rgba(180,40,40,0.5); }
-.secret-field-toggle input { margin: 0; }
-.secret-field-toggle input:checked + span { color: #f88; font-weight: 500; }
+.dm-twin-status {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.dm-twin-link {
+  color: #f88;
+  text-decoration: none;
+  font-weight: 500;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(180,40,40,0.12);
+  border: 1px solid rgba(180,40,40,0.35);
+}
+.dm-twin-link:hover {
+  background: rgba(180,40,40,0.2);
+  text-decoration: underline;
+}
+.dm-twin-btn {
+  background: rgba(180,40,40,0.12);
+  border: 1px solid rgba(180,40,40,0.35);
+  color: #f88;
+  padding: 0.3rem 0.7rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-family: var(--font-ui);
+}
+.dm-twin-btn:hover {
+  background: rgba(180,40,40,0.2);
+  border-color: #c44;
+}
 
 /* ── DM panel ────────────────────────────────────────────────── */
 .dm-panel {
@@ -287,24 +317,12 @@ body.is-impersonating { padding-top: 36px; }
   font-size: 0.9rem;
 }
 
-/* ── Secret-content marker ────────────────────────────────────── */
-/* Players never see this — the server strips [secret]...[/secret]
-   regions from markdown body fields before they leave the wire.
-   For DM and DM-impersonating-player viewers, the renderer wraps
-   the inner content in this span so the DM can tell at a glance
-   what's hidden from players. */
-.md-secret {
-  background: rgba(180,40,40,0.10);
-  border-left: 3px solid rgba(180,40,40,0.6);
-  padding: 0.05em 0.4em;
-  margin: 0 0.1em;
-  border-radius: 2px;
-  color: inherit;
-}
-.md-secret::before {
-  content: '🔒 ';
-  font-size: 0.85em;
-  opacity: 0.7;
+/* ── Wiki article twin link (DM-only fact row) ─────────────────── */
+/* Surfaces in the side card facts list (rendered by _articleShell)
+   when an entity has a linked twin. Players never get the field
+   server-side so the row is naturally absent for them. */
+.wiki-side .wiki-facts a[href*="#/"][data-twin] {
+  color: #f88;
 }
 
 /* ── Bottom nav edit toggle ──────────────────────────────────── */

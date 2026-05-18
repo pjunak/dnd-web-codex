@@ -43,104 +43,130 @@ export const EditTemplates = (() => {
     return `<div class="attitude-chip-row" id="${rowId}">${items}</div>`;
   }
 
-  // ─ Visibility section ────────────────────────────────────────
-  // Per-entity DM-mode controls: an overall `visibility` select
-  // (public / dm) and a per-field "skrýt hráčům" toggle row that
-  // mirrors the server's `secrets: { fieldName: true }` map.
+  // ─ DM section (twin-aware) ───────────────────────────────────
+  // Per-entity DM controls: the visibility select (public / DM) and
+  // the twin link row (create / view / unlink). The visibility
+  // select is DISABLED whenever the entity has a linked twin —
+  // flipping visibility on one side would put both sides in the
+  // same space, an incoherent state. The server enforces the same
+  // rule (400 on flip with twin set) as defence in depth.
   //
-  // SECRETABLE_FIELDS is the curated allow-list of fields that can
-  // be marked secret. Scoped to long-form content fields (markdown
-  // body, summary, notes). Names match MARKDOWN_FIELDS in
-  // server/visibility.cjs — adding a field here without adding it
-  // server-side means the secrets flag would be silently ignored
-  // and the content would leak to players.
-  const SECRETABLE_FIELDS = {
-    characters:       [{ id: 'description', label: 'Popis' }],
-    locations:        [{ id: 'description', label: 'Popis' }, { id: 'notes', label: 'Poznámky GM' }],
-    events:           [{ id: 'description', label: 'Popis' }, { id: 'short', label: 'Krátký souhrn' }],
-    mysteries:        [{ id: 'description', label: 'Popis' }],
-    factions:         [{ id: 'description', label: 'Popis' }],
-    species:          [{ id: 'description', label: 'Popis' }],
-    pantheon:         [{ id: 'description', label: 'Popis' }],
-    artifacts:        [{ id: 'description', label: 'Popis' }],
-    historicalEvents: [{ id: 'summary', label: 'Souhrn' }, { id: 'body', label: 'Detailní popis' }],
+  // The legacy per-field `secrets` toggles and `[secret]` marker
+  // buttons were removed in the twin-entity pivot. DM annotations
+  // now live in the linked DM-only twin entity instead.
+  //
+  // Wiki routes per collection — mirrors KIND_ROUTE in app.js so
+  // this template module can construct twin-jump links without
+  // importing anything from app.js. Keep in sync.
+  const TWIN_ROUTE_PREFIX = {
+    characters:       'postava',
+    locations:        'misto',
+    events:           'udalost',
+    mysteries:        'zahada',
+    factions:         'frakce',
+    species:          'druh',
+    pantheon:         'buh',
+    artifacts:        'artefakt',
+    historicalEvents: 'historicka-udalost',
   };
 
-  /** Build the "Viditelnost" form section. Mounted on every
-   *  edit form that participates in the visibility model. The
-   *  whole-entity select disables the "Jen DM" option for PCs
-   *  (party-faction characters) — the server PATCH handler also
-   *  rejects this combination as defence in depth.
+  /** Build the DM-only controls section for an edit form. Returns
+   *  empty string when the collection doesn't participate in the
+   *  visibility model (the template just doesn't render anything).
+   *  CSS gates the whole thing behind `body.is-dm` so non-DM
+   *  viewers never see it.
    *
    *  @param {string} uid          - The form's per-entity unique id.
    *  @param {object} entity       - The current record (or new-record defaults).
    *  @param {string} collection   - Collection name, e.g. 'characters'.
-   *  @param {{isPc?: boolean}} [opts] - Disable DM-only option (PCs).
-   *  @returns {string} HTML for the section, or '' when the
-   *           collection doesn't participate in visibility.
+   *  @param {{isPc?: boolean}} [opts] - When true, the DM-only option is
+   *                                     disabled (PCs are pinned public).
+   *  @returns {string}
    */
-  function _visibilitySection(uid, entity, collection, opts = {}) {
-    const secretables = SECRETABLE_FIELDS[collection] || [];
-    if (!Object.prototype.hasOwnProperty.call(SECRETABLE_FIELDS, collection)) return '';
+  function _dmSection(uid, entity, collection, opts = {}) {
+    if (!Object.prototype.hasOwnProperty.call(TWIN_ROUTE_PREFIX, collection)) return '';
     const visibility = (entity && entity.visibility === 'dm') ? 'dm' : 'public';
-    const secrets    = (entity && entity.secrets && typeof entity.secrets === 'object') ? entity.secrets : {};
     const isPc       = !!opts.isPc;
-    const dmDisabled = isPc ? 'disabled' : '';
-    const pcNote     = isPc
-      ? `<small class="edit-hint">Postavy ze strany hráčů jsou vždy veřejné — nelze označit jako "Jen DM".</small>`
-      : '';
+    const isNew      = !entity || !entity.id;
+    const linkedId   = entity && entity.linkedTwinId;
+    const twin       = linkedId ? (Store.getTwin ? Store.getTwin(collection, entity) : null) : null;
 
-    const secretRow = secretables.length === 0 ? '' : `
-      <div class="edit-field">
-        <label class="edit-label">Skrýt jednotlivá pole hráčům</label>
-        <div class="secret-fields-row" id="vis-secrets-${esc(uid)}">
-          ${secretables.map(f => `
-            <label class="secret-field-toggle">
-              <input type="checkbox" data-secret-field="${esc(f.id)}"
-                     ${secrets[f.id] ? 'checked' : ''}>
-              <span>${esc(f.label)}</span>
-            </label>
-          `).join('')}
-        </div>
-        <small class="edit-hint">Označená pole se z odpovědi serveru hráčům vůbec neposílají. Pro jemnější skrytí použij <code>[secret]…[/secret]</code> v textu.</small>
-      </div>`;
+    // Visibility select. Disabled when a twin exists (flip would
+    // break the pair) OR when the entity is a PC (server-pinned
+    // public).
+    const visDisabled = (linkedId || isPc) ? 'disabled' : '';
+    const visNote = isPc
+      ? `<small class="edit-hint">PC postavy jsou vždy veřejné.</small>`
+      : linkedId
+        ? `<small class="edit-hint">Tato entita má spárovaný twin — odpárujte ho před změnou viditelnosti.</small>`
+        : '';
+
+    // Twin row. Three shapes:
+    //  - new entity → instruction to save first
+    //  - linked    → name + link + unlink button
+    //  - unlinked  → create-twin button (label depends on current space)
+    let twinRow;
+    if (isNew) {
+      twinRow = `<small class="edit-hint">Uložte entitu nejdřív, pak můžete vytvořit twin.</small>`;
+    } else if (linkedId) {
+      const route   = TWIN_ROUTE_PREFIX[collection];
+      const twinNm  = twin ? twin.name : linkedId;
+      const twinVis = twin && twin.visibility === 'dm' ? 'DM' : 'hráčský';
+      twinRow = `
+        <div class="dm-twin-row">
+          <span class="dm-twin-status">🔗 Spárováno (${esc(twinVis)} twin):</span>
+          <a class="dm-twin-link" href="#/${route}/${esc(linkedId)}">${esc(twinNm)} →</a>
+          <button type="button" class="dm-twin-btn"${dataAction('EditMode.unlinkTwin', collection, entity.id)}>Odpárovat</button>
+        </div>`;
+    } else {
+      const oppositeLabel = visibility === 'dm' ? 'hráčský' : 'DM';
+      twinRow = `
+        <div class="dm-twin-row">
+          <button type="button" class="dm-twin-btn"${dataAction('EditMode.createTwin', collection, entity.id)}>
+            🔗 Vytvořit ${oppositeLabel} twin
+          </button>
+          <small class="edit-hint">Twin je samostatná entita v opačném prostoru, propojená s touhle pro snadný přechod.</small>
+        </div>`;
+    }
 
     return `
       <div class="edit-section visibility-section" id="vis-section-${esc(uid)}">
-        <div class="edit-section-title">🛡 Viditelnost (DM)</div>
+        <div class="edit-section-title">🛡 Viditelnost a twin (DM)</div>
         <div class="edit-field">
           <label class="edit-label">Viditelnost záznamu</label>
-          <select class="edit-select" id="vis-${esc(uid)}">
+          <select class="edit-select" id="vis-${esc(uid)}" ${visDisabled}>
             <option value="public" ${visibility==='public'?'selected':''}>Veřejné — vidí všichni</option>
-            <option value="dm"     ${visibility==='dm'?'selected':''} ${dmDisabled}>Jen DM</option>
+            <option value="dm"     ${visibility==='dm'?'selected':''}>Jen DM</option>
           </select>
-          ${pcNote}
+          ${visNote}
         </div>
-        ${secretRow}
+        <div class="edit-field">
+          <label class="edit-label">Twin</label>
+          ${twinRow}
+        </div>
       </div>`;
   }
 
-  /** Read the visibility section's current state back out. Returns
-   *  `{ visibility, secrets }` with canonicalised values. Falls back
-   *  to safe defaults (`'public'`, `{}`) when the section isn't on
-   *  the page (collection without visibility support, or someone
-   *  rendered a stripped-down editor).
+  /** Read the DM section's state back out. Returns `{ visibility }`
+   *  with canonicalised value. Falls back to `'public'` when the
+   *  section isn't on the page (player views or stripped-down
+   *  editors). `linkedTwinId` and twin pairing are server-managed
+   *  via /api/twin — not part of the form submission.
    *
    *  @param {string} uid - The form's per-entity unique id.
-   *  @returns {{visibility: 'public'|'dm', secrets: Object<string,true>}}
+   *  @returns {{visibility: 'public'|'dm'}}
    */
-  function _readVisibilitySection(uid) {
+  function _readDmSection(uid) {
     const sel = document.getElementById(`vis-${uid}`);
     const visibility = (sel && sel.value === 'dm') ? 'dm' : 'public';
-    const secrets = {};
-    const wrap = document.getElementById(`vis-secrets-${uid}`);
-    if (wrap) {
-      wrap.querySelectorAll('input[data-secret-field]').forEach(cb => {
-        if (cb.checked) secrets[cb.getAttribute('data-secret-field')] = true;
-      });
-    }
-    return { visibility, secrets };
+    return { visibility };
   }
+
+  // Back-compat aliases — old helper names still used by save
+  // handlers in editmode.js. Both delegate to the new twin-aware
+  // implementations.
+  const _visibilitySection      = _dmSection;
+  const _readVisibilitySection  = _readDmSection;
 
   /** Sort characters by faction order then alphabetically, with faction badge prefix.
    *  Returns the sorted array (does not mutate the original). */
@@ -1080,9 +1106,12 @@ export const EditTemplates = (() => {
     getMdTextareaHtml: _mdTextarea,
     attitudeChipRow:     _attitudeChipRow,
     readAttitudeChipRow: _readAttitudeChipRow,
+    // Twin-aware DM section (visibility select + twin link row).
+    // Old names kept as back-compat aliases for any external caller.
+    dmSection:             _dmSection,
+    readDmSection:         _readDmSection,
     visibilitySection:     _visibilitySection,
     readVisibilitySection: _readVisibilitySection,
-    SECRETABLE_FIELDS,
   };
 
 })();

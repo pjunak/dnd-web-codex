@@ -205,7 +205,10 @@ test('PATCH /api/data without DM session is rejected with 401', async () => {
   } finally { await srv.kill(); }
 });
 
-test('PATCH /api/data with player session is rejected (writes are DM-only)', async () => {
+test('PATCH /api/data with player session is ACCEPTED for public content', async () => {
+  // Under the dual-role write model, players are collaborative
+  // editors of public content. Only DM-only stuff (settings, campaign,
+  // DM-only entities, [secret] markers) is off-limits.
   const srv = await startServer({ dmPassword: DM, playerPassword: PLAYER });
   try {
     await srv.fetch('/api/login', {
@@ -215,16 +218,16 @@ test('PATCH /api/data with player session is rejected (writes are DM-only)', asy
     const res = await srv.fetch('/api/data', {
       method:  'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ type: 'characters', action: 'save', payload: { id: 'x', name: 'X' }}),
+      body:    JSON.stringify({ type: 'characters', action: 'save', payload: { id: 'x', name: 'X', faction: 'neutral' }}),
     });
-    assert.equal(res.status, 401);
+    assert.equal(res.status, 200);
   } finally { await srv.kill(); }
 });
 
-test('PATCH /api/data with DM-impersonating-player session is rejected (effective role gates writes)', async () => {
+test('PATCH /api/data with DM-impersonating-player session: player-level write access', async () => {
   // Important: write gates check req.role (effective), not realRole.
-  // A DM in "view as player" must lose write privileges so the
-  // impersonation actually mirrors what the player can do.
+  // A DM in "view as player" gets exactly what a player gets — they
+  // CAN write to public content but lose access to DM-only writes.
   const srv = await startServer({ dmPassword: DM, playerPassword: PLAYER });
   try {
     await srv.fetch('/api/login', {
@@ -232,12 +235,20 @@ test('PATCH /api/data with DM-impersonating-player session is rejected (effectiv
       body:    JSON.stringify({ password: DM }),
     });
     await srv.fetch('/api/view-as', { method: 'POST' });
-    const res = await srv.fetch('/api/data', {
+    // Public write: accepted.
+    const ok = await srv.fetch('/api/data', {
       method:  'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ type: 'characters', action: 'save', payload: { id: 'x', name: 'X' }}),
+      body:    JSON.stringify({ type: 'characters', action: 'save', payload: { id: 'x', name: 'X', faction: 'neutral' }}),
     });
-    assert.equal(res.status, 401, 'effective role player should lose write access');
+    assert.equal(ok.status, 200, 'effective role player can write public content');
+    // Settings write: rejected (DM-only type).
+    const deny = await srv.fetch('/api/data', {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ type: 'settings', action: 'save', payload: { id: 'attitudes', data: [] }}),
+    });
+    assert.equal(deny.status, 403, 'effective role player cannot write settings');
   } finally { await srv.kill(); }
 });
 

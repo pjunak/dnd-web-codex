@@ -6,6 +6,7 @@
 
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
+import { Role } from './role.js';
 import { norm, esc, renderMarkdown, extractOutline, humanTime, dataAction, dataOn } from './utils.js';
 import { PIN_TYPES, WorldMap } from './map.js';
 import { relLabel } from './data.js';
@@ -14,6 +15,57 @@ import { PARTY_FACTION_ID } from './constants.js';
 export const Wiki = (() => {
 
   const KNOWLEDGE_LABELS = ["Neznámý","Tušený","Základní","Dobře znám","Plně zmapován"];
+
+  // ── Current-article tracking (for the wiki-link resolver) ───────
+  // Each renderXxxArticle calls _setCurrentArticle({type, id}) at the
+  // top so the resolver in app.js can break twin-naming ties using
+  // the current article's visibility space as the preferred polarity.
+  // Players have nothing to disambiguate — they only see one side —
+  // so this is mostly a DM concern.
+  let _currentArticle = null;
+  function _setCurrentArticle(ctx) {
+    _currentArticle = ctx && ctx.type && ctx.id ? { type: ctx.type, id: ctx.id } : null;
+  }
+  function _getCurrentArticle() { return _currentArticle; }
+
+  // Wiki route prefix per collection — used by the twin facts row
+  // to build the cross-jump link. Mirrors KIND_ROUTE in app.js.
+  const _TWIN_LINK_ROUTE = {
+    characters:       'postava',
+    locations:        'misto',
+    events:           'udalost',
+    mysteries:        'zahada',
+    factions:         'frakce',
+    species:          'druh',
+    pantheon:         'buh',
+    artifacts:        'artefakt',
+    historicalEvents: 'historicka-udalost',
+  };
+
+  /** Build a `facts` row entry showing the linked twin, when present
+   *  and the viewer is DM. Returns '' for non-DM or when no twin is
+   *  set, so the row vanishes naturally (the facts list filters
+   *  empty values).
+   *
+   *  @param {string} collection
+   *  @param {object} entity
+   *  @returns {{label: string, value: string}|null}
+   */
+  function _twinFactRow(collection, entity) {
+    if (!Role.isDM()) return null;
+    if (!entity || !entity.linkedTwinId) return null;
+    const twin = Store.getTwin ? Store.getTwin(collection, entity) : null;
+    const route = _TWIN_LINK_ROUTE[collection];
+    if (!route) return null;
+    const twinName = twin ? twin.name : entity.linkedTwinId;
+    const polarity = twin
+      ? (twin.visibility === 'dm' ? 'DM' : 'hráčský')
+      : (entity.visibility === 'dm' ? 'hráčský' : 'DM'); // best-guess if twin missing
+    return {
+      label: '🔗 Twin',
+      value: `<a href="#/${route}/${esc(entity.linkedTwinId)}" data-twin="${esc(polarity)}">${esc(twinName)} (${esc(polarity)}) →</a>`,
+    };
+  }
 
   // ── List-view UI state (search + sort) ─────────────────────────
   // Persisted so SSE re-renders and navigation keep the user's filter.
@@ -803,7 +855,10 @@ export const Wiki = (() => {
       { label: 'Místo',    value: locationLink || '' },
       { label: 'Okolnosti',value: (c.knowledge >= 2 && c.circumstances) ? esc(c.circumstances) : '' },
       { label: 'Hodnost',  value: rankInfo },
-    ];
+      _twinFactRow('characters', c),
+    ].filter(Boolean);
+
+    _setCurrentArticle({ type: 'characters', id });
 
     const body = c.knowledge >= 2
       ? `<div class="md-view">${renderMarkdown(c.description)}</div>`
@@ -1165,6 +1220,7 @@ export const Wiki = (() => {
     const articleIconInner = articleIconUrl
       ? `<img class="ah-icon-img" src="${esc(articleIconUrl)}" alt="" ${dataOn('error', 'hide', '$el')}>`
       : esc(pt.icon);
+    _setCurrentArticle({ type: 'locations', id });
     return _articleShell({
       visual:   `<div class="ah-icon"${locGlow ? ` style="filter:${locGlow}"` : ''}>${articleIconInner}</div>`,
       title:    esc(l.name),
@@ -1175,7 +1231,8 @@ export const Wiki = (() => {
         { label: 'Nadřazené místo', value: ancestors.length
                                            ? ancestors.map(a => `<a href="#/misto/${a.id}">📍 ${esc(a.name)}</a>`).join(' › ')
                                            : '' },
-      ],
+        _twinFactRow('locations', l),
+      ].filter(Boolean),
       sections: [
         { title: 'Mapa',             html: mapRow },
         { title: 'Dílčí místa',      html: subChips },
@@ -1222,6 +1279,7 @@ export const Wiki = (() => {
       e.tags.forEach(t => chips.push(`<span class="profile-chip">${esc(t)}</span>`));
     }
 
+    _setCurrentArticle({ type: 'events', id });
     return _articleShell({
       visual: null,
       title: esc(e.name),
@@ -1229,7 +1287,8 @@ export const Wiki = (() => {
       chips,
       facts: [
         { label: 'Datum', value: e.date ? esc(e.date) : '' },
-      ],
+        _twinFactRow('events', e),
+      ].filter(Boolean),
       sections: [
         { title: 'Zúčastněné postavy', html: chars ? `<div class="relation-chips">${chars}</div>` : '' },
         { title: 'Místa',              html: locs  ? `<div class="relation-chips">${locs}</div>`  : '' },
@@ -1314,6 +1373,7 @@ export const Wiki = (() => {
       return c ? `<a class="relation-chip" href="#/postava/${cid}">${esc(c.name)}</a>` : '';
     }).join('');
 
+    _setCurrentArticle({ type: 'mysteries', id });
     return _articleShell({
       visual: `<div class="ah-icon">❓</div>`,
       title: esc(m.name),
@@ -1324,7 +1384,7 @@ export const Wiki = (() => {
           ? `<span class="profile-chip">✓ Vyřešeno</span>`
           : `<span class="profile-chip">⧗ Otevřená</span>`,
       ],
-      facts: [],
+      facts: [_twinFactRow('mysteries', m)].filter(Boolean),
       sections: [
         { title: 'Otázky', html: (m.questions||[]).length
           ? `<div class="fact-list">${m.questions.map(q => `<div class="unknown-item">${esc(q)}</div>`).join('')}</div>` : '' },
@@ -1516,14 +1576,18 @@ export const Wiki = (() => {
     const facGlow = _attitudeGlow(facEntries, facColors);
     const visualStyle = `background:${f.color}33;color:${f.textColor}${facGlow ? ';filter:'+facGlow : ''}`;
 
+    _setCurrentArticle({ type: 'factions', id });
     return _articleShell({
       visual: `<div class="ah-icon" style="${visualStyle}">${f.badge}</div>`,
       title: `<span style="color:${f.textColor}">${f.badge} ${esc(f.name)}</span>`,
       subtitle: '',
       chips,
-      facts: (f.rankChains || []).length
-        ? [{ label: 'Řetězce', value: (f.rankChains || []).map(ch => esc(ch.name)).join(', ') }]
-        : [],
+      facts: [
+        (f.rankChains || []).length
+          ? { label: 'Řetězce', value: (f.rankChains || []).map(ch => esc(ch.name)).join(', ') }
+          : null,
+        _twinFactRow('factions', f),
+      ].filter(Boolean),
       sections: [
         { title: '',                  html: inlineCreate },
         { title: 'Hodnostní Řetězce', html: (f.rankChains || []).length ? chainSections : '' },
@@ -1709,10 +1773,12 @@ export const Wiki = (() => {
           `<a class="relation-chip" href="#/postava/${c.id}">${esc(c.name)}</a>`
         ).join('')}</div>` : '';
 
+    _setCurrentArticle({ type: 'species', id });
     return _articleShell({
       visual: `<div class="ah-icon">🧬</div>`,
       title: esc(s.name),
       chips: [`<span class="profile-chip">👤 ${chars.length}</span>`],
+      facts: [_twinFactRow('species', s)].filter(Boolean),
       sections: [
         { title: 'Postavy tohoto druhu', html: charChips },
       ],
@@ -1760,6 +1826,7 @@ export const Wiki = (() => {
     if (!g) return `<p>Božstvo '${id}' nenalezeno.</p>`;
     if (EditMode.isActive()) return EditMode.renderBuhEditor(g);
 
+    _setCurrentArticle({ type: 'pantheon', id });
     return _articleShell({
       visual: `<div class="ah-icon">${esc(g.symbol || '✨')}</div>`,
       title: esc(g.name),
@@ -1768,7 +1835,8 @@ export const Wiki = (() => {
       facts: [
         { label: 'Doména',   value: g.domain    ? esc(g.domain)    : '' },
         { label: 'Zaměření', value: g.alignment ? esc(g.alignment) : '' },
-      ],
+        _twinFactRow('pantheon', g),
+      ].filter(Boolean),
       body: `<div class="md-view">${renderMarkdown(g.description)}</div>`,
       outlineSource: g.description || '',
     });
@@ -1814,6 +1882,7 @@ export const Wiki = (() => {
     const owner = a.ownerCharacterId ? Store.getCharacter(a.ownerCharacterId) : null;
     const loc   = a.locationId       ? Store.getLocation(a.locationId)        : null;
 
+    _setCurrentArticle({ type: 'artifacts', id });
     return _articleShell({
       visual: `<div class="ah-icon">🗝</div>`,
       title: esc(a.name),
@@ -1822,7 +1891,8 @@ export const Wiki = (() => {
       facts: [
         { label: 'Držitel',   value: owner ? `<a class="relation-chip" href="#/postava/${owner.id}">🎒 ${esc(owner.name)}</a>` : '' },
         { label: 'Umístění',  value: loc   ? `<a class="relation-chip" href="#/misto/${loc.id}">📍 ${esc(loc.name)}</a>` : '' },
-      ],
+        _twinFactRow('artifacts', a),
+      ].filter(Boolean),
       body: `<div class="md-view">${renderMarkdown(a.description)}</div>`,
       outlineSource: a.description || '',
     });
@@ -1895,6 +1965,7 @@ export const Wiki = (() => {
           `<a class="relation-chip" href="#/misto/${l.id}">📍 ${esc(l.name)}</a>`
         ).join('')}</div>` : '';
 
+    _setCurrentArticle({ type: 'historicalEvents', id });
     return _articleShell({
       visual: `<div class="ah-icon">📜</div>`,
       title:  esc(h.name),
@@ -1902,7 +1973,8 @@ export const Wiki = (() => {
       facts: [
         { label: 'Začátek', value: esc(h.start || '') },
         { label: 'Konec',   value: esc(h.end   || '') },
-      ],
+        _twinFactRow('historicalEvents', h),
+      ].filter(Boolean),
       sections: [
         h.summary ? { title: 'Shrnutí', html: `<div class="md-view">${renderMarkdown(h.summary)}</div>` } : null,
         charChips ? { title: 'Postavy', html: charChips } : null,
@@ -1962,5 +2034,7 @@ export const Wiki = (() => {
     setMistaSearch,   setMistaSort,   setMistaAttitude,
     setFrakceSearch,  setFrakceSort,
     saveCampaignField,
+    // Polarity-aware wiki-link tie-breaker uses this (in app.js):
+    getCurrentArticle: _getCurrentArticle,
   };
 })();

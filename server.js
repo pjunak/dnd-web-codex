@@ -20,8 +20,8 @@ const { isForbiddenKey, safeJoinIn, pickKeptSnapshots } = require('./server-util
 // caller-supplied writer) so they're importable from node --test.
 const {
   filterForRole,
-  MARKDOWN_FIELDS,
   VISIBILITY_BEARING,
+  KEYED_OBJ_VISIBILITY,
 } = require('./server/visibility.cjs');
 const { runVisibilityMigration: _runVisibilityMigration } = require('./server/migrations.cjs');
 
@@ -183,6 +183,15 @@ function requireRole(role) {
 // Keep the name as an alias for `requireRole('dm')` so we don't churn
 // every endpoint.
 const requireAuth = requireRole('dm');
+
+// Content-write gate: any authenticated role (DM or player) may use
+// the endpoint. PATCH /api/data has its own role-aware logic; this
+// gate is for simpler endpoints (portrait upload, sub-map upload)
+// that don't need per-payload sanitization.
+function requireAnyRole(req, res, next) {
+  if (req.role === 'dm' || req.role === 'player') return next();
+  return res.status(401).json({ error: 'Neznámé nebo chybějící heslo.' });
+}
 
 app.use('/portraits', express.static(PORTRAITS_DIR));
 app.use('/maps',      express.static(MAPS_DIR));
@@ -766,6 +775,11 @@ app.post('/api/view-as-dm', (req, res) => {
 // through the per-entity PATCH path (no whole-collection wipe needed).
 const KEYED_OBJ_TYPES = new Set(['factions', 'settings', 'campaign', 'deletedDefaults']);
 
+// Types DMs alone can write to. Players are collaborative editors of
+// in-world content; they don't get to rename the campaign or reshape
+// the enum vocabulary (which affects everyone instantly).
+const DM_ONLY_WRITE_TYPES = new Set(['settings', 'campaign']);
+
 // Read a JSON collection file and return parsed contents, or `fallback`
 // if the file is missing. Used inside the PATCH handler.
 async function _readJsonOr(filePath, fallback) {
@@ -776,6 +790,194 @@ async function _readJsonOr(filePath, fallback) {
     throw e;
   }
 }
+
+// ─ Player save sanitization ──────────────────────────────────────
+// Players write to public content but never touch DM-only fields,
+// secret-flagged fields, [secret] markers, or visibility flags. This
+// function takes the player's submitted entity + the existing on-disk
+// version and returns a sanitised payload to actually persist.
+//
+// Rules (twin-entity model):
+//   - `visibility` is forced to existing.visibility (or 'public' for
+//     a fresh entity). Players can NEVER change visibility.
+//   - `linkedTwinId` is preserved from existing (player payloads don't
+//     carry it — server-side strip — so omission would silently break
+//     the link without this).
+//   - `secrets` is unconditionally stripped from the payload. The
+//     legacy per-field secret toggles were retired in the twin pivot;
+//     even if a stale client sends the field, it never persists.
+//
+// DM content (the lore that used to live under [secret] markers or
+// secret flags) now lives in a sibling DM-only twin entity linked via
+// `linkedTwinId`. There's no marker collision to defend against —
+// the public entity has only public content by construction.
+function _sanitizePlayerEntity(_type, payload, existing) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const out = { ...payload };
+  const isNew = !existing;
+  out.visibility = isNew ? 'public' : (existing.visibility || 'public');
+  // Preserve linkedTwinId verbatim. Players don't see the field, so
+  // they can't intentionally manage it; the existing value must
+  // survive every player save so the DM-side link isn't silently
+  // dropped on the next player edit.
+  if (existing && existing.linkedTwinId !== undefined) {
+    out.linkedTwinId = existing.linkedTwinId;
+  } else {
+    delete out.linkedTwinId;
+  }
+  // Legacy field — refuse to persist even if a stale client sends it.
+  delete out.secrets;
+  return out;
+}
+
+// Player gate for PATCH /api/data. Authed = either role. Settings /
+// campaign reserved for DM. DM-only entity edits (visibility:'dm' on
+// disk) are also off-limits to players — they can't see the entity,
+// so their save would only be there to tamper.
+//
+// Note: a player who submits visibility:'dm' on a NEW entity is NOT
+// rejected here — the sanitizer below forces the value to 'public'.
+// Coercion is friendlier than rejection for new entities (no error
+// toast for a malformed client payload) and the security outcome is
+// identical (the entity gets stored as public).
+function _playerCanWrite(type, action, payload, existing) {
+  if (DM_ONLY_WRITE_TYPES.has(type))            return false;
+  if (existing && existing.visibility === 'dm') return false;
+  return true;
+}
+
+// ─ Twin creation ────────────────────────────────────────────────
+// Build a new entity that mirrors `source` but lives in the opposite
+// visibility space. Pure: returns the new entity object; the caller
+// is responsible for setting up the bidirectional linkedTwinId and
+// persisting both records inside one withWriteLock.
+//
+// Field copy is verbatim across every property on the source except:
+//   - `id`           → generated fresh (slug + suffix; uniqueness
+//                      check is the caller's responsibility)
+//   - `visibility`   → flipped to the opposite space
+//   - `linkedTwinId` → set explicitly by the caller to point back
+//   - `updatedAt`    → stamped fresh
+//   - `secrets`      → legacy field; never copied (removed in pivot)
+// Relationships are a separate collection and are NOT auto-mirrored;
+// the DM clones them manually in a later iteration.
+function _generateId(name) {
+  const base = String(name || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '')
+    .substring(0, 30);
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return (base || 'e') + '_' + suffix;
+}
+function _createTwin(source) {
+  const twin = { ...source };
+  delete twin.id;
+  delete twin.linkedTwinId;
+  delete twin.updatedAt;
+  delete twin.secrets;
+  twin.id = _generateId(source.name || 'twin');
+  twin.visibility = source.visibility === 'dm' ? 'public' : 'dm';
+  twin.updatedAt = Date.now();
+  return twin;
+}
+
+/**
+ * POST /api/twin — Create or unlink a twin entity. DM-only via
+ * `req.realRole === 'dm'` (impersonating players cannot manage
+ * twins; the write tier is gated on the underlying signed claim,
+ * not the effective role).
+ *
+ * Body shape:
+ *   { action: 'create', type: <collection>, sourceId: <id> }
+ *   { action: 'unlink', type: <collection>, sourceId: <id> }
+ *
+ * Atomicity: both sides of the link are written inside one
+ * `withWriteLock` pass, so a concurrent PATCH can't see the
+ * intermediate state where one side has linkedTwinId but the other
+ * doesn't. Broadcasts `data-changed` once at the end.
+ */
+app.post('/api/twin', (req, res) => {
+  if (req.realRole !== 'dm') return res.status(403).json({ error: 'Pouze pro DM' });
+  withWriteLock(async () => {
+    try {
+      const { action, type, sourceId } = req.body || {};
+      if (action !== 'create' && action !== 'unlink') {
+        return res.status(400).json({ error: `Unknown action: ${action}` });
+      }
+      if (!VISIBILITY_BEARING.has(type)) {
+        return res.status(400).json({ error: `Twin not supported for type: ${type}` });
+      }
+      if (type === 'relationships') {
+        // Relationships are tuple-keyed and rarely benefit from twins.
+        // The data model is supported in VISIBILITY_BEARING for the
+        // entity-level filter; twin pairing is intentionally not.
+        return res.status(400).json({ error: 'Twins for relationships are not supported.' });
+      }
+      if (typeof sourceId !== 'string' || !sourceId) {
+        return res.status(400).json({ error: 'Missing sourceId' });
+      }
+
+      const p = getFile(type);
+      const emptyContainer = KEYED_OBJ_TYPES.has(type) ? {} : [];
+      const container = await _readJsonOr(p, emptyContainer);
+
+      const isKeyed = KEYED_OBJ_TYPES.has(type);
+      const lookup  = id => isKeyed ? (container[id] || null)
+                                     : (container.find(x => x && x.id === id) || null);
+
+      const source = lookup(sourceId);
+      if (!source) return res.status(404).json({ error: 'Source entity not found' });
+
+      if (action === 'create') {
+        if (source.linkedTwinId) {
+          return res.status(409).json({ error: 'Entita už má spárovaný twin.' });
+        }
+        const twin = _createTwin(source);
+        // Uniqueness guard for the generated id (vanishingly rare
+        // collision; the caller retries on 500).
+        if (lookup(twin.id)) {
+          return res.status(500).json({ error: 'Twin id collision — try again.' });
+        }
+        twin.linkedTwinId = source.id;
+        source.linkedTwinId = twin.id;
+        source.updatedAt = Date.now();
+
+        if (isKeyed) {
+          container[twin.id] = twin;
+          // source already in container (mutated above)
+        } else {
+          // source already in container (mutated above)
+          container.push(twin);
+        }
+        await _atomicWrite(p, JSON.stringify(container, null, 2));
+        await _maybeSnapshot('save');
+        await _broadcastDataChanged();
+        return res.json({ ok: true, twinId: twin.id, twin });
+      }
+
+      // action === 'unlink'
+      if (!source.linkedTwinId) {
+        return res.status(409).json({ error: 'Entita nemá spárovaný twin.' });
+      }
+      const twin = lookup(source.linkedTwinId);
+      delete source.linkedTwinId;
+      source.updatedAt = Date.now();
+      if (twin) {
+        delete twin.linkedTwinId;
+        twin.updatedAt = Date.now();
+      }
+      await _atomicWrite(p, JSON.stringify(container, null, 2));
+      await _maybeSnapshot('save');
+      await _broadcastDataChanged();
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error('POST /api/twin:', e);
+      if (!res.headersSent) res.status(500).json({ error: 'Twin op failed' });
+    }
+  });
+});
 
 /**
  * PATCH /api/data — Save or delete a single entity.
@@ -792,9 +994,16 @@ async function _readJsonOr(filePath, fallback) {
  * over SSE so other clients refetch. Auto-migrates portrait paths to
  * the canonical per-character subfolder (with path-traversal guards).
  *
- * Auth: required.
+ * Auth: any authenticated role (DM or player). DMs have full access;
+ * players are limited to public content — settings/campaign types are
+ * rejected, DM-only entities are off-limits, and payloads are passed
+ * through `_sanitizePlayerEntity` so they can't flip visibility, set
+ * secrets, or overwrite [secret] marker regions.
  */
-app.patch('/api/data', requireAuth, (req, res) => {
+app.patch('/api/data', (req, res) => {
+  if (req.role !== 'dm' && req.role !== 'player') {
+    return res.status(401).json({ error: 'Neznámé nebo chybějící heslo.' });
+  }
   withWriteLock(async () => {
     try {
       const { type, action, payload } = req.body || {};
@@ -822,6 +1031,70 @@ app.patch('/api/data', requireAuth, (req, res) => {
       // Everything else is an entity list.
       const emptyContainer = KEYED_OBJ_TYPES.has(type) ? {} : [];
       let container = await _readJsonOr(p, emptyContainer);
+
+      // Look up the existing record (if any) — used both for the
+      // player gating below and for the visibility-flip + delete-
+      // cascade guards. Different lookup per collection shape.
+      let existing = null;
+      if (Array.isArray(container)) {
+        if (type === 'relationships') {
+          existing = container.find(r =>
+            r.source === payload.source &&
+            r.target === payload.target &&
+            r.type   === payload.type) || null;
+        } else {
+          existing = container.find(x => x.id === payload.id) || null;
+        }
+      } else if (KEYED_OBJ_TYPES.has(type)) {
+        existing = container[payload.id] || null;
+      }
+
+      // Player role gating + payload sanitization. Done after the
+      // basic shape validation so 400 vs 403 errors stay meaningful.
+      // DM saves bypass this entirely (full edit access).
+      if (req.role === 'player') {
+        if (!_playerCanWrite(type, action, payload, existing)) {
+          return res.status(403).json({
+            error: type === 'settings' || type === 'campaign'
+              ? 'Tato sekce je dostupná pouze DM.'
+              : 'Tato entita obsahuje DM obsah — může ji upravovat jen DM.',
+          });
+        }
+
+        // Sanitize the payload before persisting. Visibility-bearing
+        // collections only — settings/campaign are already rejected
+        // above, deletedDefaults / non-visibility-bearing types pass
+        // through unchanged (they don't carry visibility / linkedTwinId).
+        if (action === 'save' && VISIBILITY_BEARING.has(type)) {
+          if (KEYED_OBJ_TYPES.has(type)) {
+            // factions: payload.data is the record
+            payload.data = _sanitizePlayerEntity(type, payload.data, existing);
+          } else {
+            // The PATCH protocol passes the entity directly as payload
+            // for list-shaped collections. Mutate in-place via reassign.
+            const sanitized = _sanitizePlayerEntity(type, payload, existing);
+            for (const k of Object.keys(payload)) delete payload[k];
+            Object.assign(payload, sanitized);
+          }
+        }
+      }
+
+      // Visibility-flip guard. An entity with a linked twin can't
+      // have its visibility flipped — the twin pair is defined as
+      // one-public + one-DM, so flipping would leave both sides in
+      // the same space (incoherent). The DM has to explicitly
+      // unlink the twin first via POST /api/twin. Applies to BOTH
+      // roles (DM and player); player wouldn't reach this anyway
+      // because of the gating above, but the rule is structural.
+      if (action === 'save' && VISIBILITY_BEARING.has(type) && existing && existing.linkedTwinId) {
+        const incoming = KEYED_OBJ_TYPES.has(type) ? (payload.data || {}) : payload;
+        const incomingVis = incoming.visibility;
+        if (incomingVis && incomingVis !== existing.visibility) {
+          return res.status(400).json({
+            error: 'Tato entita má spárovaný twin — odpárujte ho před změnou viditelnosti.',
+          });
+        }
+      }
 
       // Auto-migrate portrait to the canonical per-character subfolder
       // on save. Both the source URL fragment AND the destination char
@@ -897,6 +1170,20 @@ app.patch('/api/data', requireAuth, (req, res) => {
           container[payload.id] = payload.data;
         }
       } else if (action === 'delete') {
+        // Twin orphan-clear: if the entity being deleted had a twin,
+        // the surviving twin's `linkedTwinId` is cleared so it doesn't
+        // dangle. Twins live in the same collection so this is a
+        // simple lookup in the just-loaded container. Runs BEFORE
+        // the actual delete + filter so we can still read `existing`.
+        if (existing && existing.linkedTwinId && VISIBILITY_BEARING.has(type)) {
+          if (Array.isArray(container)) {
+            const twin = container.find(x => x && x.id === existing.linkedTwinId);
+            if (twin) delete twin.linkedTwinId;
+          } else if (KEYED_OBJ_TYPES.has(type)) {
+            const twin = container[existing.linkedTwinId];
+            if (twin) delete twin.linkedTwinId;
+          }
+        }
         if (Array.isArray(container)) {
           if (type === 'relationships') {
             container = container.filter(r => !(r.source === payload.source && r.target === payload.target && r.type === payload.type));
@@ -993,7 +1280,7 @@ app.get('/api/events', async (req, res) => {
  *
  * Auth: required.
  */
-app.post('/api/portrait/:charId', requireAuth, uploadChar.single('portrait'), async (req, res) => {
+app.post('/api/portrait/:charId', requireAnyRole, uploadChar.single('portrait'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image received' });
   const charId  = (req.params.charId || '').replace(/[^a-z0-9_\-]/gi, '_').substring(0, 60);
   const charDir = path.join(PORTRAITS_DIR, charId);
@@ -1020,7 +1307,7 @@ catch (e) { console.warn('[tiles] sharp not installed — tile generation disabl
  * schedules an async tile-pyramid rebuild. The returned URL is always
  * usable; tiles just accelerate subsequent loads. Auth: required.
  */
-app.post('/api/localmap/:locId', requireAuth, uploadLocalMap.single('localmap'), async (req, res) => {
+app.post('/api/localmap/:locId', requireAnyRole, uploadLocalMap.single('localmap'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image received' });
   const locId  = (req.params.locId || '').replace(/[^a-z0-9_\-]/gi, '_').substring(0, 60);
   const locDir = path.join(LOCAL_MAPS_DIR, locId);
@@ -1144,7 +1431,7 @@ app.delete('/api/icons/:pinTypeId', requireAuth, (req, res) => {
   });
 });
 
-app.delete('/api/portrait/:identifier', requireAuth, async (req, res) => {
+app.delete('/api/portrait/:identifier', requireAnyRole, async (req, res) => {
   const identifier = (req.params.identifier || '').replace(/[^a-z0-9_\-\.]/gi, '_');
   const target     = _safeJoinIn(PORTRAITS_DIR, identifier);
   if (!target) return res.status(400).json({ error: 'Invalid identifier' });

@@ -213,6 +213,36 @@ document.addEventListener('error',    (ev) => {
     mysteries: 'zahada',  species:'druh',         pantheon:'buh',
     artifacts:'artefakt', historicalEvents:'historicka-udalost',
   };
+  // Polarity-aware tie-breaker for the twin model. When DM and
+  // more than one entity in the same collection matches `label`
+  // (typical case: a public + DM twin sharing a name), prefer the
+  // candidate whose `visibility` matches the CURRENT article's
+  // space. That makes copy-pasted prose between twins resolve to
+  // the right counterpart by default. Players are unaffected —
+  // they only ever see one side, so the tie never happens.
+  function _pickByPolarity(matches, getEntity) {
+    if (!matches || matches.length < 2 || !Role.isDM()) return matches[0];
+    const ctx = (typeof Wiki?.getCurrentArticle === 'function') ? Wiki.getCurrentArticle() : null;
+    if (!ctx) return matches[0];
+    const ctxEntity = getEntity ? getEntity(ctx.id) : null;
+    const ctxVis    = (ctxEntity && ctxEntity.visibility === 'dm') ? 'dm' : 'public';
+    const polarityHit = matches.find(m => (m.visibility === 'dm' ? 'dm' : 'public') === ctxVis);
+    return polarityHit || matches[0];
+  }
+  // Per-collection lookup function map, used by _pickByPolarity to
+  // resolve the current-article entity without churning the
+  // resolver signature.
+  const _STORE_GETTER_BY_COLLECTION = {
+    characters:       (id) => Store.getCharacter?.(id),
+    locations:        (id) => Store.getLocation?.(id),
+    events:           (id) => Store.getEvent?.(id),
+    mysteries:        (id) => Store.getMystery?.(id),
+    species:          (id) => Store.getSpeciesItem?.(id),
+    pantheon:         (id) => Store.getBuh?.(id),
+    artifacts:        (id) => Store.getArtifact?.(id),
+    historicalEvents: (id) => Store.getHistoricalEvent?.(id),
+    factions:         (id) => Store.getFaction?.(id),
+  };
   setWikiLinkResolver((label, hint) => {
     if (!label) return null;
     // Explicit disambiguation `[[X|kind:id]]`
@@ -226,17 +256,29 @@ document.addEventListener('error',    (ev) => {
     if (!all) return null;
     const targetN = norm(label);
     const order = ['characters','locations','events','mysteries','species','pantheon','artifacts','historicalEvents'];
+    // Current-article polarity for the tie-breaker.
+    const ctx = (typeof Wiki?.getCurrentArticle === 'function') ? Wiki.getCurrentArticle() : null;
     for (const k of order) {
       const route = KIND_ROUTE[k];
       if (scopeRoute && route !== scopeRoute) continue;
-      const hit = (all[k] || []).find(e => norm(e.name) === targetN);
-      if (hit) return { kind: route, id: hit.id };
+      const candidates = (all[k] || []).filter(e => norm(e.name) === targetN);
+      if (candidates.length === 0) continue;
+      const getter = _STORE_GETTER_BY_COLLECTION[k];
+      const ctxGetter = ctx ? _STORE_GETTER_BY_COLLECTION[ctx.type] : null;
+      const pick = _pickByPolarity(candidates, ctxGetter && ctx ? ((id) => ctxGetter(ctx.id)) : null);
+      if (pick) return { kind: route, id: pick.id };
     }
     // Faction special-case — factions aren't in searchAll, hit them by name.
     if (!scopeRoute || scopeRoute === 'frakce') {
       const factions = Store.getFactions ? Store.getFactions() : {};
+      const facMatches = [];
       for (const [id, f] of Object.entries(factions)) {
-        if (norm(f.name) === targetN) return { kind: 'frakce', id };
+        if (norm(f.name) === targetN) facMatches.push({ id, ...f });
+      }
+      if (facMatches.length) {
+        const ctxGetter = ctx ? _STORE_GETTER_BY_COLLECTION[ctx.type] : null;
+        const pick = _pickByPolarity(facMatches, ctxGetter && ctx ? ((id) => ctxGetter(ctx.id)) : null);
+        if (pick) return { kind: 'frakce', id: pick.id };
       }
     }
     return null;
@@ -385,6 +427,14 @@ document.addEventListener('error',    (ev) => {
       case "historicka-udalost":
         Wiki.renderPage("historicka-udalost", sub); break;
       case "nastaveni":
+        // Settings edits the shared enum vocabulary (attitudes, pin
+        // types, etc.) which affects everyone globally — DM only.
+        // Non-DM visitors who hit this URL get the same "jen pro DM"
+        // stub as the DM panel. The sidebar already hides the link.
+        if (!Role.isDM()) {
+          DmDashboard.render(); // reuses the stub for non-DM viewers
+          break;
+        }
         Settings.render(); break;
       case "dm":
         // DM-only section. The dashboard renderer short-circuits to
@@ -602,7 +652,15 @@ document.addEventListener('error',    (ev) => {
         <button type="button" class="role-badge-btn" data-action="Role.logout" title="Odhlásit">↩ Odhlásit</button>
       `;
     } else {
-      host.innerHTML = `<span class="role-badge-chip role-badge-anonymous" title="Nepřihlášen — zobrazuje se veřejný obsah">👁 Veřejný pohled</span>`;
+      // Anonymous. The edit toggle is also a login affordance (it
+      // prompts for a password when clicked), but surface a more
+      // obvious "Přihlásit" button here too — clicking it triggers
+      // the same EditMode.toggle flow so the user doesn't need to
+      // hunt for the ✏ button to log in.
+      host.innerHTML = `
+        <span class="role-badge-chip role-badge-anonymous" title="Nepřihlášen — zobrazuje se veřejný obsah">👁 Veřejný pohled</span>
+        <button type="button" class="role-badge-btn" data-action="EditMode.toggle" title="Přihlásit a začít editovat">🔑 Přihlásit</button>
+      `;
     }
     _renderImpersonationBanner();
   }

@@ -34,7 +34,7 @@ async function listSnapshots(snapshotsDir) {
   } catch (_) { return []; }
 }
 
-test('migration: stamps visibility:public + secrets:{} on every legacy record', async () => {
+test('migration: stamps visibility:public on every legacy record (and strips legacy secrets)', async () => {
   const srv = await startServer({
     dmPassword: DM, playerPassword: PLAYER,
     seedData: {
@@ -56,25 +56,51 @@ test('migration: stamps visibility:public + secrets:{} on every legacy record', 
     },
   });
   try {
-    // After boot, every seed record should carry the canonical fields.
+    // After boot, every seed record should carry visibility:'public'
+    // and NOT carry the legacy `secrets` field.
     const chars = await readJson(path.join(srv.dataDir, 'characters.json'));
     for (const c of chars) {
       assert.equal(c.visibility, 'public', `character ${c.id} missing visibility`);
-      assert.deepEqual(c.secrets, {},      `character ${c.id} missing secrets`);
+      assert.equal(Object.prototype.hasOwnProperty.call(c, 'secrets'), false,
+        `character ${c.id} should not carry legacy secrets`);
     }
     const locs = await readJson(path.join(srv.dataDir, 'locations.json'));
     assert.equal(locs[0].visibility, 'public');
-    assert.deepEqual(locs[0].secrets, {});
+    assert.equal(Object.prototype.hasOwnProperty.call(locs[0], 'secrets'), false);
 
     // Keyed-object collection — values, not the container, are stamped.
     const facs = await readJson(path.join(srv.dataDir, 'factions.json'));
     for (const id of Object.keys(facs)) {
       assert.equal(facs[id].visibility, 'public', `faction ${id} missing visibility`);
-      assert.deepEqual(facs[id].secrets, {});
+      assert.equal(Object.prototype.hasOwnProperty.call(facs[id], 'secrets'), false);
     }
     const hist = await readJson(path.join(srv.dataDir, 'historicalEvents.json'));
     assert.equal(hist[0].visibility, 'public');
-    assert.deepEqual(hist[0].secrets, {});
+    assert.equal(Object.prototype.hasOwnProperty.call(hist[0], 'secrets'), false);
+  } finally { await srv.kill(); }
+});
+
+test('migration: strips legacy `secrets` from existing data on first boot', async () => {
+  // Records that pre-date the twin pivot may carry a `secrets` map.
+  // The migration must strip it so the field never reappears in
+  // payloads (the field is fully retired, no UI to manage it).
+  const srv = await startServer({
+    dmPassword: DM, playerPassword: PLAYER,
+    seedData: {
+      'characters.json': [
+        { id: 'a', name: 'Alice', faction: 'neutral', visibility: 'public', secrets: { description: true } },
+        { id: 'b', name: 'Bob',   faction: 'cult',    visibility: 'dm',     secrets: {} },
+      ],
+    },
+  });
+  try {
+    const chars = await readJson(path.join(srv.dataDir, 'characters.json'));
+    for (const c of chars) {
+      assert.equal(Object.prototype.hasOwnProperty.call(c, 'secrets'), false,
+        `${c.id}: legacy secrets must be stripped`);
+    }
+    // Pre-existing visibility preserved.
+    assert.equal(chars.find(c => c.id === 'b').visibility, 'dm');
   } finally { await srv.kill(); }
 });
 
@@ -101,8 +127,9 @@ test('migration: idempotent — already-stamped data triggers no writes, no snap
     dmPassword: DM, playerPassword: PLAYER,
     seedData: {
       // Pre-stamped data simulates a second boot after migration ran.
+      // No `secrets` field (twin model deprecated it).
       'characters.json': [
-        { id: 'a', name: 'Alice', faction: 'neutral', visibility: 'public', secrets: {} },
+        { id: 'a', name: 'Alice', faction: 'neutral', visibility: 'public' },
       ],
     },
   });
@@ -152,16 +179,15 @@ test('migration: does NOT touch settings / deletedDefaults / campaign collection
   } finally { await srv.kill(); }
 });
 
-test('migration: preserves existing visibility:dm + secrets values', async () => {
-  // If a record already has visibility:'dm', migration must NOT
-  // overwrite it back to public.
+test('migration: preserves existing visibility:dm; strips legacy secrets', async () => {
+  // A record with visibility:'dm' keeps it; the legacy `secrets`
+  // field on a separate record gets stripped (it's deprecated under
+  // the twin model).
   const srv = await startServer({
     dmPassword: DM, playerPassword: PLAYER,
     seedData: {
       'characters.json': [
-        // Has visibility but missing secrets — migration adds secrets only.
-        { id: 'preset_dm',  name: 'X', faction: 'cult', visibility: 'dm' },
-        // Has secrets but missing visibility — migration adds visibility only.
+        { id: 'preset_dm',  name: 'X', faction: 'cult',    visibility: 'dm' },
         { id: 'preset_sec', name: 'Y', faction: 'neutral', secrets: { description: true } },
       ],
     },
@@ -171,9 +197,10 @@ test('migration: preserves existing visibility:dm + secrets values', async () =>
     const presetDm  = chars.find(c => c.id === 'preset_dm');
     const presetSec = chars.find(c => c.id === 'preset_sec');
     assert.equal(presetDm.visibility,  'dm',     'pre-existing visibility:dm preserved');
-    assert.deepEqual(presetDm.secrets, {},       'missing secrets backfilled');
+    assert.equal(Object.prototype.hasOwnProperty.call(presetDm,  'secrets'), false);
     assert.equal(presetSec.visibility, 'public', 'missing visibility backfilled to public');
-    assert.deepEqual(presetSec.secrets, { description: true }, 'pre-existing secrets preserved');
+    assert.equal(Object.prototype.hasOwnProperty.call(presetSec, 'secrets'), false,
+      'legacy secrets stripped during migration');
   } finally { await srv.kill(); }
 });
 
@@ -203,7 +230,8 @@ test('migration: covers every visibility-bearing collection (no silent omissions
       const entries = Array.isArray(data) ? data : Object.values(data);
       for (const e of entries) {
         assert.equal(e.visibility, 'public', `${collection} entity missing visibility post-migration`);
-        assert.deepEqual(e.secrets, {},      `${collection} entity missing secrets post-migration`);
+        assert.equal(Object.prototype.hasOwnProperty.call(e, 'secrets'), false,
+          `${collection} entity should not carry legacy secrets`);
       }
     }
   } finally { await srv.kill(); }
@@ -250,7 +278,8 @@ test('migration: preserves all other entity fields verbatim', async () => {
   try {
     const chars = await readJson(path.join(srv.dataDir, 'characters.json'));
     const after = chars[0];
-    // Spread + the two new fields = the full original.
-    assert.deepEqual(after, { ...original, visibility: 'public', secrets: {} });
+    // Spread + visibility = the full original (twin-model migration
+    // only adds `visibility`; no `secrets` to backfill anymore).
+    assert.deepEqual(after, { ...original, visibility: 'public' });
   } finally { await srv.kill(); }
 });

@@ -748,6 +748,64 @@ export const Store = (() => {
     return true;
   }
 
+  // ─ Twin operations (DM-only) ──────────────────────────────────
+  // The server handles atomicity (both sides of a twin link are
+  // written together in one `withWriteLock` pass on /api/twin) so
+  // the client just fires-and-awaits and relies on the SSE refetch
+  // to pick up both records. `linkTwin('create', ...)` returns the
+  // new twin id on success so the caller can navigate to it.
+
+  /**
+   * Create a twin for an existing entity in the opposite visibility
+   * space, or unlink an existing twin pair. DM-only.
+   *
+   * @param {'create'|'unlink'} action
+   * @param {string} type      - Collection name (must be in VISIBILITY_BEARING).
+   * @param {string} sourceId  - Id of the source entity.
+   * @returns {Promise<{ok: boolean, twinId?: string, error?: string}>}
+   */
+  async function linkTwin(action, type, sourceId) {
+    if (!_serverAvailable) return { ok: false, error: 'Server není dostupný.' };
+    try {
+      const res = await fetch('/api/twin', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body:    JSON.stringify({ action, type, sourceId }),
+      });
+      if (res.status === 401 || res.status === 403) {
+        window.dispatchEvent(new CustomEvent('store:auth-failed'));
+        return { ok: false, error: 'Tato akce vyžaduje DM přístup.' };
+      }
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
+      return { ok: true, twinId: body.twinId };
+    } catch (e) {
+      return { ok: false, error: e.message || 'Síťová chyba.' };
+    }
+  }
+
+  /** Resolve an entity's twin from its `linkedTwinId`. Returns null
+   *  if no twin id is set or the target doesn't exist in the same
+   *  collection. */
+  function getTwin(collection, entity) {
+    if (!entity || !entity.linkedTwinId) return null;
+    init();
+    const tid = entity.linkedTwinId;
+    switch (collection) {
+      case 'characters':       return getCharacter(tid);
+      case 'locations':        return getLocation(tid);
+      case 'events':           return getEvent(tid);
+      case 'mysteries':        return getMystery(tid);
+      case 'factions':         return getFaction(tid);
+      case 'species':          return getSpeciesItem(tid);
+      case 'pantheon':         return getBuh(tid);
+      case 'artifacts':        return getArtifact(tid);
+      case 'historicalEvents': return getHistoricalEvent(tid);
+      default:                 return null;
+    }
+  }
+
   /**
    * Upload a portrait image for a character.
    *
@@ -1850,6 +1908,7 @@ export const Store = (() => {
     load, init,
     uploadPortrait, deletePortrait, uploadLocalMap,
     uploadIcons, deleteIcon, deleteIcons,
+    linkTwin, getTwin,
     getCharacters, isPartyMember, isVisibleTo, getPartyMembers, getNPCs,
     getRelationships, getLocations, getEvents, getMysteries,
     getFactions, getFaction, getStatusMap,

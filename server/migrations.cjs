@@ -20,9 +20,14 @@ const fsp  = require('fs').promises;
 const path = require('path');
 const { VISIBILITY_BEARING, KEYED_OBJ_VISIBILITY } = require('./visibility.cjs');
 
-// Add `visibility: 'public'` + `secrets: {}` to every record that
-// doesn't have those fields. Returns `{ changed, byCollection }` so
-// the caller knows whether to snapshot/broadcast.
+// Idempotent startup pass over every visibility-bearing collection:
+//   - Backfill `visibility: 'public'` on records that lack it.
+//   - Strip the legacy `secrets: {...}` field if present (the twin-
+//     entity pivot replaced per-field secret toggles with DM-twin
+//     entities; the field is dead weight on disk now).
+//
+// Returns `{ changed, byCollection }` so the caller can decide
+// whether to snapshot + broadcast.
 async function runVisibilityMigration(dataDir, opts = {}) {
   const atomicWrite = opts.atomicWrite || _defaultAtomicWrite;
   const result = { changed: 0, byCollection: {} };
@@ -63,9 +68,10 @@ async function runVisibilityMigration(dataDir, opts = {}) {
   return result;
 }
 
-// Stamp `visibility: 'public'` + `secrets: {}` if missing. Returns
-// true if the entity was mutated (so the caller knows to write).
-// Idempotent: an entity already carrying the canonical fields is a
+// Backfill `visibility: 'public'` if missing, and strip the legacy
+// `secrets: {...}` field if present. Returns true if the entity was
+// mutated (so the caller knows to write). Idempotent: an entity
+// already carrying the canonical visibility AND no secrets is a
 // no-op.
 function _stampDefaults(entity) {
   let mutated = false;
@@ -73,8 +79,8 @@ function _stampDefaults(entity) {
     entity.visibility = 'public';
     mutated = true;
   }
-  if (entity.secrets === undefined) {
-    entity.secrets = {};
+  if (Object.prototype.hasOwnProperty.call(entity, 'secrets')) {
+    delete entity.secrets;
     mutated = true;
   }
   return mutated;
