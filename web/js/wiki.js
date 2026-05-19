@@ -1448,14 +1448,18 @@ export const Wiki = (() => {
     const factions = Store.getFactions();
     const chars    = Store.getCharacters();
 
-    // Build entries, then dedupe shadow twins. Factions live in a
-    // keyed-object collection — passing values through dedupeShadowTwins
-    // requires matching the array view used by getCollection('factions').
-    const dedupedFactions = new Map(
-      Store.dedupeShadowTwins('factions', Object.values(factions)).map(f => [f.id, f])
+    // Dedupe shadow twins. getCollection('factions') returns
+    // id-stamped values (factions are keyed-object on disk, so the
+    // raw values from `Store.getFactions()` lack an `id` field —
+    // passing those into dedupeShadowTwins would collapse the
+    // resulting Map under a single `undefined` key and filter every
+    // faction out).
+    const allFactions  = Store.getCollection('factions');
+    const survivingIds = new Set(
+      Store.dedupeShadowTwins('factions', allFactions).map(f => f.id)
     );
     let entries = Object.entries(factions)
-      .filter(([id]) => dedupedFactions.has(id))
+      .filter(([id]) => survivingIds.has(id))
       .map(([id, f]) => ({
         id, f,
         memberCount: chars.filter(c => c.faction === id).length,

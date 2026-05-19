@@ -2419,11 +2419,17 @@ export const CloudMap = (() => {
   function _renderFrakce() {
     _buildUI('frakce');
 
-    // Clear stale positions from before hub/location nodes were added
+    // Clear stale positions / filter when the layout's node-set changes.
+    // Bumped to '3' when the party left the factions collection — old
+    // saved layouts referenced `hub_party` which no longer exists, and
+    // a saved faction filter could still hide 'party' (harmless) or
+    // reference renamed ids. Wiping both gives the user a clean slate.
     const POS_VERSION_KEY = 'cm_pos_v_frakce';
-    if (localStorage.getItem(POS_VERSION_KEY) !== '2') {
+    if (localStorage.getItem(POS_VERSION_KEY) !== '3') {
       localStorage.removeItem('cm_pos_frakce');
-      localStorage.setItem(POS_VERSION_KEY, '2');
+      localStorage.removeItem('cm_filter_frakce');
+      _hiddenFactions = new Set();
+      localStorage.setItem(POS_VERSION_KEY, '3');
     }
 
     const chars    = Store.getCharacters();

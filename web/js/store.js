@@ -931,9 +931,11 @@ export const Store = (() => {
   }
 
   /** Return every entity in a visibility-bearing collection as a
-   *  uniform array (factions is keyed-object → returns Object.values).
-   *  Used by the twin picker to enumerate candidate targets. Returns
-   *  [] for unknown collections. */
+   *  uniform array (factions is keyed-object → values are merged
+   *  with their parent-object key as `id`, so the returned shape is
+   *  always `{id, ...}` regardless of underlying storage). Used by
+   *  the twin picker + `dedupeShadowTwins` to enumerate candidates.
+   *  Returns [] for unknown collections. */
   function getCollection(name) {
     init();
     switch (name) {
@@ -945,7 +947,13 @@ export const Store = (() => {
       case 'pantheon':         return _data.pantheon         || [];
       case 'artifacts':        return _data.artifacts        || [];
       case 'historicalEvents': return _data.historicalEvents || [];
-      case 'factions':         return Object.values(_data.factions || {});
+      case 'factions':
+        // Faction objects live keyed in the parent — no `id` field on
+        // the value itself. Stamp it on so `dedupeShadowTwins` and the
+        // twin picker (both keyed off `entity.id`) see the same shape
+        // as array-collections. Return new objects to avoid mutating
+        // the live store.
+        return Object.entries(_data.factions || {}).map(([id, fac]) => ({ id, ...fac }));
       default:                 return [];
     }
   }
