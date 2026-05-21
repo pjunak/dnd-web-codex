@@ -512,6 +512,13 @@ export const Settings = (() => {
       // when the list arrives.
       render();
       _loadSnapshots().then(render);
+    } else if (cat === 'account') {
+      // Password status is DM-only; for non-DM viewers the panel
+      // skips the form entirely so the fetch is a wasted round-trip
+      // but harmless (server returns 403, we just don't render forms).
+      _passwordStatus = null;
+      render();
+      if (Role.getReal() === 'dm') _loadPasswordStatus().then(render);
     } else {
       render();
     }
@@ -1245,9 +1252,20 @@ export const Settings = (() => {
   }
 
   // ── Account panel ────────────────────────────────────────────
-  // Lightweight: current role chip + logout button. Lives in Settings
-  // so DM viewers (who don't have a 'Odhlásit' affordance in the
-  // sidebar role badge) can sign out without hunting for it.
+  // Two parts:
+  //   1. Current role chip + login/logout button (anyone with a
+  //      session can see this — DM viewers in particular, since the
+  //      sidebar role badge doesn't carry a 'Odhlásit' affordance).
+  //   2. Password management for DM and player roles. DM-only — the
+  //      whole /nastaveni route is anyway, but we double-gate so a
+  //      future role expansion doesn't accidentally leak the form.
+  //      Backed by GET/POST /api/passwords; status fetched lazily on
+  //      tab entry and re-fetched after every successful change.
+
+  // Cached password status: { dm, player } each with {stored, updatedAt,
+  // envFallback, isDefault?, disabled?}. Loaded by _loadPasswordStatus.
+  let _passwordStatus = null;
+
   function _accountHtml() {
     const role     = Role.get();
     const realRole = Role.getReal();
@@ -1262,6 +1280,14 @@ export const Settings = (() => {
            ${dataAction('Settings.logout')}>↩ Odhlásit</button>`
       : `<button type="button" class="inline-create-btn"
            ${dataAction('EditMode.toggle')}>🔑 Přihlásit</button>`;
+    // Password management section — DM-only. Guard on realRole so a
+    // DM in "view as player" mode still sees the forms (they're the
+    // one with credentials).
+    const passwordSection = (realRole === 'dm')
+      ? _passwordSectionHtml()
+      : `<p class="settings-hint" style="margin-top:1rem;font-style:italic">
+           Změna hesla je dostupná pouze pro DM.
+         </p>`;
     return `
       <div class="settings-editor-head">
         <h2>👤 Účet</h2>
@@ -1276,7 +1302,133 @@ export const Settings = (() => {
           Pro další úpravy bude potřeba zadat heslo znovu.
         </p>
         ${logoutBtn}
+        ${passwordSection}
       </div>`;
+  }
+
+  /** Renders the DM-only password management subsection: status
+   *  summary for each role plus two change-password forms. Both forms
+   *  require the DM's current password as a safety check. */
+  function _passwordSectionHtml() {
+    const st = _passwordStatus;
+    if (!st) {
+      return `<hr style="border:none;border-top:1px dashed rgba(212,184,122,0.18);margin:1.5rem 0">
+        <div class="settings-mapviews-group-title">🔑 Hesla účtů</div>
+        <p class="settings-hint" style="margin-top:0.6rem">Načítám stav…</p>`;
+    }
+    return `
+      <hr style="border:none;border-top:1px dashed rgba(212,184,122,0.18);margin:1.5rem 0">
+      <div class="settings-mapviews-group-title">🔑 Hesla účtů</div>
+      <p class="settings-hint" style="margin-top:0.6rem;margin-bottom:1rem">
+        Nastav nebo změň heslo pro DM i hráče. Změna vyžaduje aktuální DM
+        heslo. Heslo se ukládá jako hash do <code>data/auth.json</code>
+        a přebije proměnnou prostředí. Nová hesla okamžitě odhlásí všechny
+        ostatní relace dané role.
+      </p>
+      ${_passwordFormHtml('dm', '🛡 DM heslo', st.dm)}
+      ${_passwordFormHtml('player', '👤 Hráčské heslo', st.player)}`;
+  }
+
+  function _passwordFormHtml(role, title, info) {
+    const statusLine = (() => {
+      if (info.stored) {
+        const when = info.updatedAt
+          ? ` (změněno ${_formatSnapshotDate(new Date(info.updatedAt).toISOString())})`
+          : '';
+        return `<span style="color:var(--accent-gold)">● nastaveno${esc(when)}</span>`;
+      }
+      if (role === 'dm' && info.isDefault) {
+        return `<span style="color:#e88">⚠ výchozí ("123") — nastav vlastní</span>`;
+      }
+      if (role === 'player' && info.disabled) {
+        return `<span style="color:var(--text-muted)">○ vypnuto (hráči se nepřihlásí)</span>`;
+      }
+      if (info.envFallback) {
+        return `<span style="color:var(--text-muted)">○ z proměnné prostředí</span>`;
+      }
+      return `<span style="color:var(--text-muted)">○ nenastaveno</span>`;
+    })();
+    const placeholder = (role === 'player')
+      ? 'Nové heslo (prázdné = vypnout hráčský účet)'
+      : 'Nové heslo (min. 4 znaky)';
+    return `
+      <div class="settings-panel" style="margin-bottom:1rem;background:rgba(0,0,0,0.18)">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:1rem;margin-bottom:0.6rem">
+          <strong>${esc(title)}</strong>
+          <span style="font-size:0.85rem">${statusLine}</span>
+        </div>
+        <div class="settings-form-row">
+          <label class="settings-field">
+            <span class="settings-field-label">Aktuální DM heslo</span>
+            <input class="edit-input" type="password" autocomplete="current-password"
+                   id="pwd-${esc(role)}-current"
+                   placeholder="Pro potvrzení">
+          </label>
+          <label class="settings-field">
+            <span class="settings-field-label">Nové heslo</span>
+            <input class="edit-input" type="password" autocomplete="new-password"
+                   id="pwd-${esc(role)}-new"
+                   placeholder="${esc(placeholder)}">
+          </label>
+          <label class="settings-field">
+            <span class="settings-field-label">Potvrdit nové heslo</span>
+            <input class="edit-input" type="password" autocomplete="new-password"
+                   id="pwd-${esc(role)}-confirm"
+                   placeholder="Zopakuj nové heslo">
+          </label>
+        </div>
+        <div class="settings-form-actions" style="margin-top:0.8rem">
+          <button type="button" class="edit-save-btn"
+            ${dataAction('Settings.changePassword', role)}>💾 ${role === 'player' && info.stored ? 'Změnit nebo vymazat heslo' : 'Uložit heslo'}</button>
+        </div>
+      </div>`;
+  }
+
+  /** Submit handler for one password form. Reads the three inputs,
+   *  validates locally (matching server-side rules), POSTs to
+   *  /api/passwords, then re-fetches status + re-renders. */
+  function changePassword(role) {
+    if (role !== 'dm' && role !== 'player') return;
+    const get = id => document.getElementById(id)?.value || '';
+    const current = get(`pwd-${role}-current`);
+    const next    = get(`pwd-${role}-new`);
+    const confirm = get(`pwd-${role}-confirm`);
+    if (!current) { _flash('Zadej aktuální DM heslo', false); return; }
+    if (next !== confirm) { _flash('Nová hesla se neshodují', false); return; }
+    if (role === 'dm' && next.length < 4) {
+      _flash('DM heslo musí mít alespoň 4 znaky', false); return;
+    }
+    if (role === 'player' && next.length > 0 && next.length < 4) {
+      _flash('Hráčské heslo musí mít alespoň 4 znaky (nebo prázdné pro vypnutí)', false); return;
+    }
+    if (next.length > 200) { _flash('Heslo je příliš dlouhé', false); return; }
+
+    fetch('/api/passwords', {
+      method:      'POST',
+      credentials: 'same-origin',
+      headers:     { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role, currentPassword: current, newPassword: next }),
+    })
+      .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+      .then(() => {
+        const msg = (role === 'player' && next === '')
+          ? 'Hráčský účet vypnut'
+          : `Heslo (${role === 'dm' ? 'DM' : 'hráč'}) změněno`;
+        _flash(msg);
+        // Re-fetch status so the rows reflect the new "nastaveno" timestamp.
+        return _loadPasswordStatus().then(render);
+      })
+      .catch(e => _flash(e?.error || 'Změna hesla selhala', false));
+  }
+
+  /** Fetch DM/player password status from the server. Stores into
+   *  module-level _passwordStatus; returns the promise so callers can
+   *  chain a render. */
+  function _loadPasswordStatus() {
+    return fetch('/api/passwords', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { _passwordStatus = j; })
+      .catch(() => { _passwordStatus = null; });
   }
 
   /** Clear the session cookie via Role.logout(). The role:changed
@@ -1562,6 +1714,7 @@ export const Settings = (() => {
     updateMapZoomRatioReadout, commitMapZoomRatio,
     isPendingSelfCommit,
     logout,
+    changePassword,
     previewDefaultIcon,
     savePlayerParty,
   };

@@ -3,8 +3,9 @@
 // is fine in production but flaky in tests (port collisions, dangling
 // servers). Pure-ish functions only — no module-level side effects.
 
-const fs   = require('fs');
-const path = require('path');
+const fs     = require('fs');
+const path   = require('path');
+const crypto = require('crypto');
 
 // Keys that would write to Object.prototype on `container[k] = …`.
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -84,4 +85,46 @@ function pickKeptSnapshots(metas, { recentKeep = 50, dailyDays = 14, now = Date.
   return keep;
 }
 
-module.exports = { isForbiddenKey, safeJoinIn, pickKeptSnapshots, FORBIDDEN_KEYS };
+// ── Password storage helpers ─────────────────────────────────────
+// Credentials persist on disk as `{ salt, hash }` so a leaked backup
+// zip doesn't immediately reveal the raw password. Hash is plain
+// SHA-256 of `salt + ':' + password` — matches the security posture
+// of the rest of the auth flow (the session cookie token is also
+// SHA-256-derived). Not a KDF; brute-forcing a short password is
+// still cheap. Intended threat model: keep the password out of
+// snapshots/backups and casual disk inspection, NOT defend against a
+// determined attacker who exfiltrated the file.
+//
+// `salt` is 16 bytes of crypto.randomBytes → 32 hex chars. New salt
+// on every password set.
+
+/** Constant-time string equality. Returns false (not throws) on
+ *  length mismatch so callers can use it as a drop-in for ===. */
+function safeEqStrings(a, b) {
+  const ba = Buffer.from(String(a == null ? '' : a), 'utf8');
+  const bb = Buffer.from(String(b == null ? '' : b), 'utf8');
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
+}
+
+/** Generate a credential record from a raw password. Salt is fresh
+ *  on every call. Returns `{ salt, hash, updatedAt }`. */
+function hashPassword(raw, now = Date.now()) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.createHash('sha256').update(salt + ':' + String(raw)).digest('hex');
+  return { salt, hash, updatedAt: now };
+}
+
+/** Verify a raw password against a stored `{ salt, hash }` record.
+ *  Returns false for null/missing/corrupt records so callers can do
+ *  `if (!verifyPassword(stored, input))` without null-checking. */
+function verifyPassword(stored, raw) {
+  if (!stored || typeof stored.salt !== 'string' || typeof stored.hash !== 'string') return false;
+  const candidate = crypto.createHash('sha256').update(stored.salt + ':' + String(raw == null ? '' : raw)).digest('hex');
+  return safeEqStrings(candidate, stored.hash);
+}
+
+module.exports = {
+  isForbiddenKey, safeJoinIn, pickKeptSnapshots, FORBIDDEN_KEYS,
+  safeEqStrings, hashPassword, verifyPassword,
+};

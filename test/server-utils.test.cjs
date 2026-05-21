@@ -4,7 +4,10 @@ const fs        = require('fs');
 const os        = require('os');
 const path      = require('path');
 
-const { isForbiddenKey, safeJoinIn, pickKeptSnapshots } = require('../server-utils.cjs');
+const {
+  isForbiddenKey, safeJoinIn, pickKeptSnapshots,
+  hashPassword, verifyPassword, safeEqStrings,
+} = require('../server-utils.cjs');
 
 // ── isForbiddenKey ────────────────────────────────────────────────
 test('isForbiddenKey: rejects __proto__/constructor/prototype and non-strings', () => {
@@ -143,4 +146,70 @@ test('pickKeptSnapshots: skips entries with unparseable timestamps in daily wind
   // recentKeep=5 sweeps both into the recent window; the daily branch
   // just shouldn't crash on the bad row.
   assert.equal(keep.has('good'), true);
+});
+
+// ── safeEqStrings ─────────────────────────────────────────────────
+test('safeEqStrings: equal strings return true', () => {
+  assert.equal(safeEqStrings('abc', 'abc'), true);
+  assert.equal(safeEqStrings('', ''),       true);
+});
+
+test('safeEqStrings: unequal or different-length strings return false', () => {
+  assert.equal(safeEqStrings('abc', 'abcd'), false);
+  assert.equal(safeEqStrings('abc', 'abd'),  false);
+  assert.equal(safeEqStrings('abc', ''),     false);
+});
+
+test('safeEqStrings: handles null/undefined as empty string', () => {
+  assert.equal(safeEqStrings(null, ''),         true);
+  assert.equal(safeEqStrings(undefined, null),  true);
+  assert.equal(safeEqStrings(null, 'x'),        false);
+});
+
+// ── hashPassword / verifyPassword ─────────────────────────────────
+test('hashPassword: returns {salt, hash, updatedAt} with hex salt + hash', () => {
+  const cred = hashPassword('hunter2', 1700000000000);
+  assert.equal(typeof cred.salt, 'string');
+  assert.equal(typeof cred.hash, 'string');
+  assert.match(cred.salt, /^[0-9a-f]{32}$/);
+  assert.match(cred.hash, /^[0-9a-f]{64}$/);
+  assert.equal(cred.updatedAt, 1700000000000);
+});
+
+test('hashPassword: different calls produce different salts (and therefore hashes)', () => {
+  const a = hashPassword('same-password');
+  const b = hashPassword('same-password');
+  assert.notEqual(a.salt, b.salt);
+  assert.notEqual(a.hash, b.hash);
+});
+
+test('verifyPassword: accepts the correct password', () => {
+  const cred = hashPassword('hunter2');
+  assert.equal(verifyPassword(cred, 'hunter2'), true);
+});
+
+test('verifyPassword: rejects the wrong password', () => {
+  const cred = hashPassword('hunter2');
+  assert.equal(verifyPassword(cred, 'wrong'),   false);
+  assert.equal(verifyPassword(cred, 'HUNTER2'), false);
+  assert.equal(verifyPassword(cred, ''),        false);
+});
+
+test('verifyPassword: rejects null / corrupt / partial records', () => {
+  assert.equal(verifyPassword(null, 'x'),                            false);
+  assert.equal(verifyPassword(undefined, 'x'),                       false);
+  assert.equal(verifyPassword({}, 'x'),                              false);
+  assert.equal(verifyPassword({ salt: 'a' }, 'x'),                   false);
+  assert.equal(verifyPassword({ hash: 'a' }, 'x'),                   false);
+  assert.equal(verifyPassword({ salt: 123, hash: 'a' }, 'x'),        false);
+});
+
+test('verifyPassword: handles null / undefined input as empty string', () => {
+  // An empty-string password is a real credential (some test fixtures
+  // use it). Verify that hashing & checking '' round-trips, and that
+  // null/undefined are coerced to '' the same way.
+  const cred = hashPassword('');
+  assert.equal(verifyPassword(cred, ''),        true);
+  assert.equal(verifyPassword(cred, null),      true);
+  assert.equal(verifyPassword(cred, undefined), true);
 });

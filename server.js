@@ -11,7 +11,10 @@ const cookieParser = require('cookie-parser');
 
 // Pure helpers extracted for testability. server-utils.cjs has no
 // module-level side effects so it can be required from `node --test`.
-const { isForbiddenKey, safeJoinIn, pickKeptSnapshots } = require('./server-utils.cjs');
+const {
+  isForbiddenKey, safeJoinIn, pickKeptSnapshots,
+  hashPassword, verifyPassword, safeEqStrings,
+} = require('./server-utils.cjs');
 
 // Role-aware filtering of the dataset (`server/visibility.cjs`) and
 // the startup migration that backfills `visibility:'public'` on every
@@ -107,31 +110,92 @@ app.use(express.json({ limit: '10mb' }));
 app.use((req, res, next) => attachRole(req, res, next));
 
 // ── Auth ──────────────────────────────────────────────────────────
-// Two shared passwords: DM_PASSWORD (full edit access) and
-// PLAYER_PASSWORD (read-only view, no DM-only content). Cookie value:
+// Two shared passwords: DM (full edit access) and PLAYER (read-only
+// view, no DM-only content). Cookie value:
 //   "<realRole>.<role>.<token>"
-// where token = SHA256(realRole + ':' + role + ':' + password). The
+// where token = SHA256(realRole + ':' + role + ':' + secret). The
 // realRole claim is part of the signed token so a DM impersonating a
 // player can flip back without re-entering the password, and a player
-// can't forge a realRole=dm cookie. EDIT_PASSWORD is a back-compat
-// alias for DM_PASSWORD.
-function _dmPassword()     { return process.env.DM_PASSWORD     || process.env.EDIT_PASSWORD || '123'; }
-function _playerPassword() { return process.env.PLAYER_PASSWORD || ''; }
+// can't forge a realRole=dm cookie.
+//
+// Passwords come from two sources, in priority order:
+//   1. `data/auth.json` — stored as `{ salt, hash, updatedAt }`. Set
+//      by the DM via Settings → Účet, persists across restarts, and
+//      survives env-var changes. Hash is SHA-256(salt + ':' + pwd).
+//   2. Env vars DM_PASSWORD / PLAYER_PASSWORD (EDIT_PASSWORD is a
+//      legacy alias for DM_PASSWORD). Only consulted when the
+//      corresponding role is missing from auth.json.
+//
+// The cookie token is derived from whichever secret was used (stored
+// hash or env-var raw). When the DM changes a password, the new hash
+// → new token → existing cookies for that role become invalid, which
+// is the desired logout-everyone-else behaviour.
+const AUTH_FILE = path.join(DATA_DIR, 'auth.json');
+
+// Lazy cache of the parsed auth.json. Reloaded on every write through
+// `_writeStoredCredentials`; cleared via `_clearAuthCache` so the
+// next `_loadStoredCredentials()` re-reads from disk.
+let _authCache = null;
+function _clearAuthCache() { _authCache = null; }
+function _loadStoredCredentials() {
+  if (_authCache) return _authCache;
+  try {
+    const raw = fs.readFileSync(AUTH_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    _authCache = (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch (e) {
+    if (e.code !== 'ENOENT') console.warn('[auth] failed to read auth.json:', e.message);
+    _authCache = {};
+  }
+  return _authCache;
+}
+function _storedCredentialFor(role) {
+  const c = _loadStoredCredentials()[role];
+  if (!c || typeof c.salt !== 'string' || typeof c.hash !== 'string') return null;
+  return c;
+}
+async function _writeStoredCredentials(next) {
+  const json = JSON.stringify(next, null, 2);
+  await _atomicWrite(AUTH_FILE, json);
+  // Restrictive perms: best-effort, harmless on Windows where chmod
+  // is a near-noop. Better than nothing on the Linux deploy target.
+  try { await fsp.chmod(AUTH_FILE, 0o600); } catch (_) {}
+  _clearAuthCache();
+}
+
+function _dmEnvPassword()     { return process.env.DM_PASSWORD     || process.env.EDIT_PASSWORD || '123'; }
+function _playerEnvPassword() { return process.env.PLAYER_PASSWORD || ''; }
+
+// Secret used as the cookie-token input. Prefer stored hash (changes
+// when DM rotates the password → invalidates outstanding cookies);
+// fall back to env-var raw. Empty string = "no password configured"
+// → `_tokenFor` returns '' so the role can't be logged into.
+function _secretFor(role) {
+  const stored = _storedCredentialFor(role);
+  if (stored) return stored.hash;
+  return role === 'dm' ? _dmEnvPassword() : _playerEnvPassword();
+}
 
 function _tokenFor(realRole, role) {
-  const pwd = realRole === 'dm' ? _dmPassword() : _playerPassword();
+  const secret = _secretFor(realRole);
   // Empty player password = player auth disabled; never matches.
-  if (!pwd) return '';
+  if (!secret) return '';
   return crypto.createHash('sha256')
-    .update(realRole + ':' + role + ':' + pwd)
+    .update(realRole + ':' + role + ':' + secret)
     .digest('hex');
 }
-function _safeEq(a, b) {
-  const ba = Buffer.from(String(a || ''), 'utf8');
-  const bb = Buffer.from(String(b || ''), 'utf8');
-  if (ba.length !== bb.length) return false;
-  return crypto.timingSafeEqual(ba, bb);
+// Validate a raw login password against the configured credential for
+// this role. Stored credential wins; falls back to env var.
+function _verifyPassword(role, raw) {
+  const stored = _storedCredentialFor(role);
+  if (stored) return verifyPassword(stored, raw);
+  const envPwd = role === 'dm' ? _dmEnvPassword() : _playerEnvPassword();
+  if (!envPwd) return false;   // player auth disabled when env empty
+  return safeEqStrings(raw, envPwd);
 }
+// Back-compat alias for the rest of the file — `_safeEq` was the only
+// helper this section exported.
+const _safeEq = safeEqStrings;
 // Cookie shape: "<realRole>.<role>.<hex token>". Anything malformed
 // returns null so callers default to anonymous.
 function _parseSessionCookie(value) {
@@ -391,6 +455,13 @@ async function _lastSnapshotTime() {
   } catch { return 0; }
 }
 
+// `auth.json` is deployment config, not campaign data. We intentionally
+// exclude it from snapshots (so restoring an old snapshot doesn't
+// silently roll back a password change) and from the data hash (so a
+// password rotation doesn't trigger a no-op SSE refetch). It still
+// ships inside the full backup zip for disaster-recovery purposes.
+const NON_DATA_JSON_FILES = new Set(['auth.json']);
+
 async function _createSnapshot(reason = 'save') {
   const now       = Date.now();
   const createdAt = new Date(now).toISOString();
@@ -399,6 +470,7 @@ async function _createSnapshot(reason = 'save') {
     const list = await fsp.readdir(DATA_DIR);
     for (const f of list) {
       if (!f.endsWith('.json')) continue;
+      if (NON_DATA_JSON_FILES.has(f)) continue;
       try {
         files[f] = JSON.parse(await fsp.readFile(path.join(DATA_DIR, f), 'utf8'));
       } catch (_) { /* skip corrupt file */ }
@@ -460,11 +532,14 @@ async function _restoreSnapshot(id) {
     await _atomicWrite(path.join(DATA_DIR, name), JSON.stringify(content, null, 2));
   }
   // Remove any JSON file not in the snapshot (e.g. a collection
-  // added after the snapshot that didn't exist then).
+  // added after the snapshot that didn't exist then). Skip
+  // NON_DATA_JSON_FILES — those aren't tracked by snapshots, so
+  // missing-from-snapshot is the expected state, not a removal signal.
   try {
     const list = await fsp.readdir(DATA_DIR);
     for (const f of list) {
       if (!f.endsWith('.json')) continue;
+      if (NON_DATA_JSON_FILES.has(f)) continue;
       if (!Object.prototype.hasOwnProperty.call(snap.files, f)) {
         try { await fsp.unlink(path.join(DATA_DIR, f)); } catch (_) {}
       }
@@ -498,6 +573,10 @@ function _maybeBustDataHash(filePath) {
     // and any other nested dir do not.
     if (dir !== _DATA_DIR_RESOLVED) return;
     if (dir.startsWith(_SNAPSHOTS_DIR_RESOLVED)) return;
+    // Files explicitly excluded from the data hash (e.g. auth.json)
+    // shouldn't invalidate the cache either — otherwise a password
+    // change would trigger a no-op SSE refetch.
+    if (NON_DATA_JSON_FILES.has(path.basename(filePath))) return;
     _cachedDataHash = null;
   } catch (_) { _cachedDataHash = null; }
 }
@@ -515,7 +594,9 @@ async function _dataHash() {
   if (_cachedDataHash !== null) return _cachedDataHash;
   try {
     const h = crypto.createHash('sha1');
-    const list = (await fsp.readdir(DATA_DIR)).filter(f => f.endsWith('.json')).sort();
+    const list = (await fsp.readdir(DATA_DIR))
+      .filter(f => f.endsWith('.json') && !NON_DATA_JSON_FILES.has(f))
+      .sort();
     for (const f of list) {
       h.update(f);
       h.update('\0');
@@ -686,14 +767,10 @@ app.post('/api/login', (req, res) => {
     return res.status(401).json({ error: 'Špatné heslo' });
   }
   let role = null;
-  if (_safeEq(password, _dmPassword())) {
+  if (_verifyPassword('dm', password)) {
     role = 'dm';
-  } else {
-    const pp = _playerPassword();
-    // Empty PLAYER_PASSWORD = player auth disabled. Without this short-
-    // circuit `_safeEq('', '')` would return true and any empty body
-    // would grant player access.
-    if (pp && _safeEq(password, pp)) role = 'player';
+  } else if (_verifyPassword('player', password)) {
+    role = 'player';
   }
   if (!role) {
     _noteFailure(ip);
@@ -766,6 +843,106 @@ app.post('/api/view-as-dm', (req, res) => {
     maxAge:   30 * 24 * 60 * 60 * 1000,
   });
   res.json({ ok: true, role: 'dm', realRole: 'dm' });
+});
+
+/**
+ * GET /api/passwords — DM-only. Report which roles have a stored
+ * password (vs falling back to env / default). Used by the Settings →
+ * Účet tab to label each row "nastaveno" vs "z proměnné prostředí".
+ *
+ * Never reveals the hash or salt — only presence flags.
+ */
+app.get('/api/passwords', (req, res) => {
+  if (req.realRole !== 'dm') return res.status(403).json({ error: 'Pouze pro DM' });
+  const dm     = _storedCredentialFor('dm');
+  const player = _storedCredentialFor('player');
+  res.json({
+    dm: {
+      stored:    !!dm,
+      updatedAt: dm ? (dm.updatedAt || null) : null,
+      envFallback: !dm && !!(process.env.DM_PASSWORD || process.env.EDIT_PASSWORD),
+      isDefault: !dm && !(process.env.DM_PASSWORD || process.env.EDIT_PASSWORD),
+    },
+    player: {
+      stored:    !!player,
+      updatedAt: player ? (player.updatedAt || null) : null,
+      envFallback: !player && !!process.env.PLAYER_PASSWORD,
+      disabled:  !player && !process.env.PLAYER_PASSWORD,
+    },
+  });
+});
+
+/**
+ * POST /api/passwords — DM-only. Set or change the DM or player
+ * password. Stores `{ salt, hash, updatedAt }` to `data/auth.json`,
+ * which supersedes any env-var value on subsequent restarts.
+ *
+ * Body: `{ role: 'dm' | 'player', newPassword: string, currentPassword?: string }`
+ *
+ * Rules:
+ *   - Caller must currently hold a DM session (realRole === 'dm').
+ *   - `currentPassword` MUST verify against the active DM password
+ *     before any change is accepted. This blocks a stolen session
+ *     cookie from rotating credentials silently.
+ *   - `newPassword` ≥ 4 chars. Empty string for `role: 'player'`
+ *     is a special case: clears the stored player credential AND
+ *     means env fallback applies (or player auth is disabled if env
+ *     is also empty). Empty DM password is rejected outright.
+ *   - On success: writes auth.json, then re-issues the caller's
+ *     cookie if they changed their own (DM) password — otherwise
+ *     their session would be invalidated by the secret rotation.
+ */
+app.post('/api/passwords', async (req, res) => {
+  if (req.realRole !== 'dm') return res.status(403).json({ error: 'Pouze pro DM' });
+  const { role, newPassword, currentPassword } = req.body || {};
+  if (role !== 'dm' && role !== 'player') {
+    return res.status(400).json({ error: 'Neznámá role' });
+  }
+  if (typeof newPassword !== 'string') {
+    return res.status(400).json({ error: 'Heslo musí být řetězec' });
+  }
+  // Always require the DM's current password — even when rotating the
+  // player password, since a stolen session shouldn't be able to lock
+  // players out.
+  if (!_verifyPassword('dm', currentPassword || '')) {
+    return res.status(401).json({ error: 'Aktuální DM heslo nesouhlasí' });
+  }
+  // Validation: DM password must be non-trivial; empty player
+  // password is the documented "clear stored credential, fall back to
+  // env (or disable player auth)" lever.
+  if (role === 'dm' && newPassword.length < 4) {
+    return res.status(400).json({ error: 'DM heslo musí mít alespoň 4 znaky' });
+  }
+  if (role === 'player' && newPassword.length > 0 && newPassword.length < 4) {
+    return res.status(400).json({ error: 'Hráčské heslo musí mít alespoň 4 znaky (nebo prázdné pro vymazání)' });
+  }
+  if (newPassword.length > 200) {
+    return res.status(400).json({ error: 'Heslo je příliš dlouhé' });
+  }
+
+  await withWriteLock(async () => {
+    const current = { ..._loadStoredCredentials() };
+    if (role === 'player' && newPassword === '') {
+      delete current.player;
+    } else {
+      current[role] = hashPassword(newPassword);
+    }
+    await _writeStoredCredentials(current);
+  });
+
+  // After a DM password change the secret rotates, which invalidates
+  // every outstanding DM cookie — including ours. Re-issue so the
+  // caller stays logged in without a manual re-login.
+  if (role === 'dm') {
+    res.cookie('edit_session', _cookieValue('dm', req.role || 'dm'), {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure:   process.env.NODE_ENV === 'production',
+      path:     '/',
+      maxAge:   30 * 24 * 60 * 60 * 1000,
+    });
+  }
+  res.json({ ok: true, role });
 });
 
 // Collections stored as keyed objects on disk (factions, settings,
@@ -1852,25 +2029,32 @@ async function _bootstrap() {
   // Loud warnings about password configuration. The codebase is open-
   // source so anyone can compute SHA256(...) — a deployment that left
   // DM_PASSWORD unset (or set to the default "123") would be world-
-  // editable. EDIT_PASSWORD is the legacy alias; honour it but nag.
+  // editable. A stored credential in data/auth.json (set via Settings
+  // → Účet) satisfies the same requirement and silences the warning.
+  // EDIT_PASSWORD is the legacy alias; honour it but nag.
+  const storedDm     = !!_storedCredentialFor('dm');
+  const storedPlayer = !!_storedCredentialFor('player');
   const dmPwdRaw  = process.env.DM_PASSWORD || process.env.EDIT_PASSWORD;
   const playerPwd = process.env.PLAYER_PASSWORD;
   const legacy    = !!process.env.EDIT_PASSWORD && !process.env.DM_PASSWORD;
-  if (!dmPwdRaw || dmPwdRaw === '123') {
+  if (!storedDm && (!dmPwdRaw || dmPwdRaw === '123')) {
     console.warn('');
-    console.warn('  ⚠  DM_PASSWORD is ' + (dmPwdRaw ? 'the default ("123")' : 'UNSET') + '.');
+    console.warn('  ⚠  DM password is ' + (dmPwdRaw ? 'the default ("123")' : 'UNSET') + '.');
     console.warn('     Anyone with the source can compute the cookie value and gain DM access.');
-    console.warn('     Set DM_PASSWORD in the environment (e.g. in docker-compose.yml or .env) before exposing this server.');
+    console.warn('     Set DM_PASSWORD in the environment, OR sign in once and change it from Settings → Účet.');
     console.warn('');
-  } else if (legacy) {
+  } else if (!storedDm && legacy) {
     console.warn('');
     console.warn('  ℹ  Using EDIT_PASSWORD as DM_PASSWORD (back-compat alias).');
     console.warn('     Set DM_PASSWORD explicitly to silence this notice.');
     console.warn('');
+  } else if (storedDm) {
+    console.log('  ✓  DM password loaded from data/auth.json (overrides env var).');
   }
-  if (!playerPwd) {
-    console.warn('  ℹ  PLAYER_PASSWORD is unset — player login is disabled.');
+  if (!storedPlayer && !playerPwd) {
+    console.warn('  ℹ  Player password is unset — player login is disabled.');
     console.warn('     Unauthenticated visitors see only public content (same view as a player).');
+    console.warn('     Set PLAYER_PASSWORD, or sign in as DM and configure it from Settings → Účet.');
     console.warn('');
   }
   try {
