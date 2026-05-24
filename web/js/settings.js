@@ -1280,6 +1280,21 @@ export const Settings = (() => {
            ${dataAction('Settings.logout')}>↩ Odhlásit</button>`
       : `<button type="button" class="inline-create-btn"
            ${dataAction('EditMode.toggle')}>🔑 Přihlásit</button>`;
+    // View-as-player toggle. Moved here from the sidebar so non-DM
+    // users see no role chrome outside Přehled. Only DMs (real or
+    // impersonating) see these buttons — players never need them.
+    const viewAsBtn = (() => {
+      if (realRole !== 'dm') return '';
+      if (role === 'dm') {
+        return `<button type="button" class="inline-create-btn"
+                  ${dataAction('Role.viewAsPlayer')}
+                  title="Zobrazit web tak, jak ho vidí hráč">👁 Zobrazit jako hráč</button>`;
+      }
+      // role === 'player' && realRole === 'dm' (impersonating)
+      return `<button type="button" class="inline-create-btn"
+                ${dataAction('Role.backToDM')}
+                title="Zpět do DM režimu">← Zpět do DM režimu</button>`;
+    })();
     // Password management section — DM-only. Guard on realRole so a
     // DM in "view as player" mode still sees the forms (they're the
     // one with credentials).
@@ -1301,7 +1316,10 @@ export const Settings = (() => {
           Odhlášení zruší relaci a vrátí stránku do veřejného režimu.
           Pro další úpravy bude potřeba zadat heslo znovu.
         </p>
-        ${logoutBtn}
+        <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center">
+          ${logoutBtn}
+          ${viewAsBtn}
+        </div>
         ${passwordSection}
       </div>`;
   }
@@ -1440,22 +1458,51 @@ export const Settings = (() => {
   }
 
   // ── Backup / Snapshot panel ──────────────────────────────────
+  // Players see: the snapshot list + the create-manual-snapshot
+  // button. Pinning a "known-good" point before risky edits is
+  // useful for everyone, and the metadata endpoint leaks nothing.
+  // DM-only on top: the raw ZIP download (would bypass the
+  // visibility filter), restore-from-file, restore-snapshot,
+  // delete-snapshot, and revert-last-N. The server enforces all of
+  // this — the UI gates below are pure UX so non-DM viewers don't
+  // see buttons that would 401.
   function _backupHtml() {
+    const isDM = Role.isDM();
     const rows = _snapshots.length ? _snapshots.map(_snapshotRow).join('') : `
       <div class="settings-empty">Zatím žádné body zálohy.</div>`;
-    return `
-      <div class="settings-editor-head">
-        <h2>💾 Záloha</h2>
-        <div class="settings-editor-actions">
+    const downloadBtn = isDM ? `
           <a class="inline-create-btn" href="/api/backup"
-             title="Stáhne ZIP celé složky data/">📥 Stáhnout ZIP</a>
+             title="Stáhne ZIP celé složky data/">📥 Stáhnout ZIP</a>` : '';
+    const restoreBtn = isDM ? `
           <label class="inline-create-btn" style="cursor:pointer"
              title="Nahraj ZIP ze Stáhnout ZIP nebo JSON exportu pro úplnou obnovu dat">
             📤 Obnovit ze zálohy…
             <input type="file" accept=".zip,.json,application/zip,application/json"
                    style="display:none"
                    ${dataOn('change', 'Settings.uploadRestore', '$el')}>
+          </label>` : '';
+    const revertRow = isDM ? `
+        <div class="settings-revert-row">
+          <label class="settings-field" style="margin-right:0.6rem">
+            <span class="settings-field-label">Vrátit poslední X úprav</span>
+            <input class="edit-input" type="number" min="1" max="50"
+                   value="1" id="settings-revert-n" style="width:5rem">
           </label>
+          <button type="button" class="edit-delete-btn"
+                  ${dataAction('Settings.revertLastN')}>↶ Vrátit</button>
+        </div>` : '';
+    const playerHint = isDM ? '' : `
+        <p class="settings-hint" style="margin-bottom:0.8rem;font-style:italic">
+          Stažení zálohy a obnova jsou dostupné pouze pro DM. Můžeš
+          ale vytvořit ruční bod zálohy — DM ho pak zvládne obnovit,
+          kdyby se něco pokazilo.
+        </p>`;
+    return `
+      <div class="settings-editor-head">
+        <h2>💾 Záloha</h2>
+        <div class="settings-editor-actions">
+          ${downloadBtn}
+          ${restoreBtn}
           <button type="button" class="inline-create-btn"
                   ${dataAction('Settings.createSnapshot')}>＋ Vytvořit bod zálohy</button>
           <button type="button" class="inline-create-btn"
@@ -1466,19 +1513,10 @@ export const Settings = (() => {
         <p class="settings-hint" style="margin-bottom:0.8rem">
           Server automaticky vytvoří bod zálohy při každé úpravě
           (sdružuje změny do 60 s). Udržuje posledních 50 bodů plus
-          jeden denní po dobu 14 dnů. Obnovit můžeš libovolný bod níže
-          nebo nahrát celý ZIP / JSON přes <em>Obnovit ze zálohy…</em>
-          výše — před nahrazením se vždy vytvoří bezpečnostní bod.
+          jeden denní po dobu 14 dnů.${isDM ? ' Obnovit můžeš libovolný bod níže nebo nahrát celý ZIP / JSON přes <em>Obnovit ze zálohy…</em> výše — před nahrazením se vždy vytvoří bezpečnostní bod.' : ''}
         </p>
-        <div class="settings-revert-row">
-          <label class="settings-field" style="margin-right:0.6rem">
-            <span class="settings-field-label">Vrátit poslední X úprav</span>
-            <input class="edit-input" type="number" min="1" max="50"
-                   value="1" id="settings-revert-n" style="width:5rem">
-          </label>
-          <button type="button" class="edit-delete-btn"
-                  ${dataAction('Settings.revertLastN')}>↶ Vrátit</button>
-        </div>
+        ${playerHint}
+        ${revertRow}
         <div class="settings-snapshots">${rows}</div>
       </div>`;
   }
@@ -1488,12 +1526,9 @@ export const Settings = (() => {
     const kb   = Math.max(1, Math.round((s.size || 0) / 1024));
     const tag  = s.reason === 'manual' ? '✦ ruční' :
                  s.reason === 'pre-restore' ? '⚠ před obnovou' : '✎ úprava';
-    return `
-      <div class="settings-row">
-        <span class="settings-row-icon">🕒</span>
-        <span class="settings-row-label">${esc(when)}</span>
-        <code class="settings-row-id">${esc(tag)}</code>
-        <span class="settings-row-usage" title="Velikost">${kb} kB</span>
+    // Restore + delete are DM-only; players see the row without
+    // action buttons so they can review history but not roll it back.
+    const actions = Role.isDM() ? `
         <div class="settings-row-actions">
           <button type="button" class="settings-btn-edit"
                   title="Obnovit tento stav"
@@ -1501,7 +1536,14 @@ export const Settings = (() => {
           <button type="button" class="settings-btn-del"
                   title="Smazat bod zálohy"
                   ${dataAction('Settings.deleteSnapshot', s.id)}>🗑</button>
-        </div>
+        </div>` : '';
+    return `
+      <div class="settings-row">
+        <span class="settings-row-icon">🕒</span>
+        <span class="settings-row-label">${esc(when)}</span>
+        <code class="settings-row-id">${esc(tag)}</code>
+        <span class="settings-row-usage" title="Velikost">${kb} kB</span>
+        ${actions}
       </div>`;
   }
 

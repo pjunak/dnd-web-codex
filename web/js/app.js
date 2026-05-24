@@ -323,6 +323,11 @@ document.addEventListener('error',    (ev) => {
     // Close the mobile drawer if navigating via a sidebar link.
     document.body.classList.remove('mobile-nav-open');
 
+    // Top-right login chip visibility is route-dependent (dashboard only).
+    // Render here so leaving / returning to Přehled hides / re-shows the chip
+    // without waiting for a role transition.
+    _renderTopbarLogin();
+
     // Mind-map sub-routes that all belong to Myšlenkový Palác
     const PALAC_ROUTES = new Set(["/mapa/palac", "/mapa/frakce", "/mapa/vztahy", "/mapa/tajemstvi"]);
 
@@ -482,7 +487,8 @@ document.addEventListener('error',    (ev) => {
     if (hash !== null) _lastHash = hash;
     await Store.load();
     Settings.applySidebarVisibility();
-    _renderRoleBadge();
+    _renderTopbarLogin();
+    _renderImpersonationBanner();
     // Self-originated SSE echoes (e.g. the Mapy zoom-scale slider's
     // own PATCH) shouldn't replace the entire Settings DOM —
     // doing so kills any in-flight slider drag. The Settings module
@@ -612,57 +618,38 @@ document.addEventListener('error',    (ev) => {
     _showServerBanner("⚠ Uložení na server selhalo — zkontrolujte připojení a znovu načtěte stránku.");
   });
 
-  // ── Role badge ──────────────────────────────────────────────
-  // Lives in the sidebar footer. Shows the effective role with a
-  // single-action chip:
-  //   - anonymous    → "Přihlásit" (opens edit-toggle which prompts)
-  //   - player       → "Odhlásit"
-  //   - DM (live)    → "Pohled hráče" (impersonation toggle)
-  //   - DM (impers.) → also shows a persistent red banner with a
-  //                    "← Zpět na DM" button
+  // ── Top-right login chip ────────────────────────────────────
+  // Floats top-right, but ONLY on the Přehled (dashboard) route AND
+  // only when the visitor is anonymous. Everywhere else, login is
+  // on-demand — clicking ✏ Úpravy or any per-entity edit affordance
+  // triggers the same password prompt. Logout + role switching live
+  // in Settings → Účet (so authed users have no persistent chrome).
   //
-  // Re-rendered after every Role state change (boot, login, view-as
-  // toggle, SSE refetch) so the UI stays in sync without per-page
-  // wiring. Cosmetic only — the server is the truth.
-  function _renderRoleBadge() {
-    let host = document.getElementById('role-badge');
-    if (!host) {
-      const footer = document.querySelector('.sidebar-footer');
-      if (!footer) return;
-      host = document.createElement('div');
-      host.id = 'role-badge';
-      host.className = 'role-badge';
-      footer.insertBefore(host, footer.firstChild);
+  // Called from `role:changed`, from `navigate()` (route changes
+  // affect visibility), and from boot. The chip itself is a single
+  // button — no role indicator, since the impersonation banner
+  // handles that case and the rest is implicit (you're either logged
+  // in and seeing edit affordances, or you aren't).
+  function _renderTopbarLogin() {
+    const route  = getRoute();
+    const onDash = (route === '/' || route === '/dashboard');
+    const show   = Role.isAnonymous() && onDash;
+
+    let chip = document.getElementById('topbar-login');
+    if (!show) {
+      if (chip) chip.remove();
+      return;
     }
-    const role     = Role.get();
-    const realRole = Role.getReal();
-    if (role === 'dm') {
-      host.innerHTML = `
-        <span class="role-badge-chip role-badge-dm" title="Přihlášen jako DM">🛡 DM</span>
-        <button type="button" class="role-badge-btn" data-action="Role.viewAsPlayer" title="Zobrazit web tak, jak ho vidí hráč">👁 Pohled hráče</button>
-      `;
-    } else if (role === 'player' && realRole === 'dm') {
-      host.innerHTML = `
-        <span class="role-badge-chip role-badge-impersonating" title="DM v pohledu hráče">👁 Pohled hráče</span>
-        <button type="button" class="role-badge-btn" data-action="Role.backToDM" title="Zpět do DM režimu">← Zpět na DM</button>
-      `;
-    } else if (role === 'player') {
-      host.innerHTML = `
-        <span class="role-badge-chip role-badge-player" title="Přihlášen jako hráč">👤 Hráč</span>
-        <button type="button" class="role-badge-btn" data-action="Role.logout" title="Odhlásit">↩ Odhlásit</button>
-      `;
-    } else {
-      // Anonymous. The edit toggle is also a login affordance (it
-      // prompts for a password when clicked), but surface a more
-      // obvious "Přihlásit" button here too — clicking it triggers
-      // the same EditMode.toggle flow so the user doesn't need to
-      // hunt for the ✏ button to log in.
-      host.innerHTML = `
-        <span class="role-badge-chip role-badge-anonymous" title="Nepřihlášen — zobrazuje se veřejný obsah">👁 Veřejný pohled</span>
-        <button type="button" class="role-badge-btn" data-action="EditMode.toggle" title="Přihlásit a začít editovat">🔑 Přihlásit</button>
-      `;
-    }
-    _renderImpersonationBanner();
+    if (chip) return;  // already showing the right thing
+
+    chip = document.createElement('button');
+    chip.id   = 'topbar-login';
+    chip.type = 'button';
+    chip.className = 'topbar-login';
+    chip.title = 'Přihlásit a začít editovat';
+    chip.setAttribute('data-action', 'EditMode.toggle');
+    chip.innerHTML = '<span class="topbar-login-icon">🔑</span> <span class="topbar-login-label">Přihlásit</span>';
+    document.body.appendChild(chip);
   }
 
   function _renderImpersonationBanner() {
@@ -688,14 +675,18 @@ document.addEventListener('error',    (ev) => {
   // we must refetch the data and re-render so the new server-side
   // filter takes effect. Role.refresh fires `role:changed` whenever
   // its cached state actually changes, so this listener covers every
-  // pathway in one place. Cosmetic UI (the sidebar badge + the
-  // impersonation banner) goes here too.
+  // pathway in one place. Cosmetic UI (top-right login chip + the
+  // impersonation banner) goes here too. The chip is re-rendered
+  // again by navigate() so route changes affect its visibility, but
+  // we also render here so login/logout transitions repaint without
+  // waiting for the subsequent navigate.
   let _roleChangeInflight = false;
   window.addEventListener('role:changed', async () => {
     if (_roleChangeInflight) return;     // protect against re-entry while await Store.load() runs
     _roleChangeInflight = true;
     try {
-      _renderRoleBadge();
+      _renderTopbarLogin();
+      _renderImpersonationBanner();
       await Store.load();
       Settings.applySidebarVisibility();
       navigate(getRoute());
@@ -720,9 +711,11 @@ document.addEventListener('error',    (ev) => {
     // Apply user-configured sidebar visibility before first paint so
     // hidden pages don't flash on screen during boot.
     Settings.applySidebarVisibility();
-    // Render the role badge / view-as toggle in the sidebar footer
-    // once we know the role.
-    _renderRoleBadge();
+    // Render the top-right login chip (anonymous + dashboard only)
+    // and any impersonation banner once we know the role. navigate()
+    // re-runs _renderTopbarLogin on every route change too.
+    _renderTopbarLogin();
+    _renderImpersonationBanner();
 
     // Remove loading screen
     const loading = document.getElementById("loading");

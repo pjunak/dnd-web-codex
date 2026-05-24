@@ -86,15 +86,10 @@ body:not(.is-dm) .visibility-section { display: none; }
 body:not(.is-dm) .sidebar-section-dm,
 body:not(.is-dm) .sidebar-nav-dm { display: none; }
 
-/* Sidebar role badge — sits above the existing footer buttons. */
-.role-badge {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  padding-bottom: 0.6rem;
-  margin-bottom: 0.4rem;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-}
+/* Role chip — used inline in Settings → Účet to show the caller's
+   role. Was also used by the old sidebar-footer badge, which moved
+   to a top-right login chip (see .topbar-login below). Keep these
+   variants because Settings still renders them. */
 .role-badge-chip {
   display: inline-block;
   font-family: var(--font-ui);
@@ -125,20 +120,50 @@ body:not(.is-dm) .sidebar-nav-dm { display: none; }
   border: 1px solid rgba(255,255,255,0.07);
   color: var(--text-muted);
 }
-.role-badge-btn {
-  background: none;
-  border: 1px solid rgba(255,255,255,0.1);
+
+/* Top-right login chip — floats over the dashboard for anonymous
+   visitors. Rendered/removed by `_renderTopbarLogin` in app.js based
+   on Role.isAnonymous() AND route === '/' (or '/dashboard'). Clicking
+   it goes through EditMode.toggle which shows the existing password
+   modal; on successful login the chip vanishes and edit mode comes on.
+   Logout + role switching live in Settings → Účet — no persistent
+   chrome outside Přehled is by design (the user asked for "no clutter
+   outside the homescreen"). */
+.topbar-login {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 100;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: rgba(200,160,64,0.14);
+  border: 1px solid var(--accent-gold);
   border-radius: var(--radius);
-  padding: 0.3rem 0.5rem;
+  padding: 0.5rem 0.85rem;
   font-family: var(--font-ui);
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
-}
-.role-badge-btn:hover {
-  border-color: rgba(200,160,64,0.4);
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
   color: var(--accent-gold);
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.35);
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.topbar-login:hover { background: rgba(200,160,64,0.22); }
+.topbar-login:active { transform: translateY(1px); }
+.topbar-login-icon { font-size: 1rem; }
+/* Sits above the impersonation banner (which only renders for
+   DM-in-player-view, mutually exclusive with anonymous so no overlap
+   in practice — but the z-index ordering keeps things robust). */
+body.is-impersonating .topbar-login { top: calc(1rem + 36px); }
+@media (max-width: 600px) {
+  .topbar-login {
+    top: 0.5rem;
+    right: 0.5rem;
+    padding: 0.4rem 0.7rem;
+    font-size: 0.78rem;
+  }
+  .topbar-login-label { display: none; }
 }
 
 /* Top-of-page red banner while a DM is impersonating a player. The

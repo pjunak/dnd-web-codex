@@ -1670,9 +1670,11 @@ app.delete('/api/portrait/:identifier', requireAnyRole, async (req, res) => {
 
 /**
  * GET /api/snapshots — List every snapshot, newest first. Each entry
- * carries `{id, createdAt, dataHash, reason, size}`. Auth: required.
+ * carries `{id, createdAt, dataHash, reason, size}`. Auth: any role —
+ * players need read access so they can see their own change history
+ * and pick a download point. Destructive endpoints below stay DM-only.
  */
-app.get('/api/snapshots', requireAuth, async (_req, res) => {
+app.get('/api/snapshots', requireAnyRole, async (_req, res) => {
   try {
     const files = await _snapshotFiles();
     const metas = (await Promise.all(files.map(_snapshotMeta))).filter(Boolean);
@@ -1688,9 +1690,10 @@ app.get('/api/snapshots', requireAuth, async (_req, res) => {
 /**
  * POST /api/snapshots — Take a manual snapshot now. Bypasses the
  * 60 s coalesce window that suppresses bursts during normal save
- * activity. Auth: required.
+ * activity. Auth: any role — players can pin a "known-good" point
+ * before they make a risky edit, same as DMs.
  */
-app.post('/api/snapshots', requireAuth, (_req, res) => {
+app.post('/api/snapshots', requireAnyRole, (_req, res) => {
   withWriteLock(async () => {
     try {
       const id = await _createSnapshot('manual');
@@ -1810,7 +1813,13 @@ app.post('/api/worldmap', requireAuth, uploadWorldMap.single('worldmap'), async 
 
 /**
  * GET /api/backup — Stream the entire `data/` directory as a ZIP
- * download. Compatible input format for `/api/restore`. Auth: required.
+ * download. Compatible input format for `/api/restore`. Auth: DM
+ * only — the raw on-disk JSON includes DM-only entities
+ * (`visibility:'dm'`) that the role filter normally hides. A player
+ * download would bypass that filter. Players can still see the
+ * snapshot list and create manual server-side snapshots (no contents
+ * leave the server), and the DM can hand them a filtered export
+ * separately if needed.
  */
 app.get('/api/backup', requireAuth, (_req, res) => {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
