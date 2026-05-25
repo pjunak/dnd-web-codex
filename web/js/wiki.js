@@ -84,12 +84,6 @@ export const Wiki = (() => {
       window.location.hash = target;
     }
   }
-  /** Clear edit state without navigating. Called by editmode.saveXxx /
-   *  deleteXxx after a successful write so the post-save `_refreshTo`
-   *  lands on the article view (not the editor again). */
-  function stopEditingArticle() {
-    _editingArticle = null;
-  }
   /** Cancel the in-flight edit and re-render the article view. Bound
    *  to the editor header's `← Zrušit` button (replaces the bare
    *  history.back() of the previous global-mode design). */
@@ -2462,10 +2456,12 @@ export const Wiki = (() => {
     setMistaSearch,   setMistaSort,   setMistaAttitude,
     setFrakceSearch,  setFrakceSort,
     saveCampaignField,
-    // Per-article edit state (replaces the global EditMode.isActive
-    // check for article view-vs-edit branching).
-    startEditingArticle, stopEditingArticle, cancelEditingArticle,
-    syncEditRoute,
+    // Per-article edit state. `startEditingArticle` opens the editor
+    // for one entity; `cancelEditingArticle` is the editor's ← Zrušit
+    // button; `syncEditRoute` is called from app.js navigate() to drop
+    // stale state when the user navigates away. Save flow uses the
+    // `editmode:clean` window event (no explicit "stop" call needed).
+    startEditingArticle, cancelEditingArticle, syncEditRoute,
     // /zahady aggregate-questions live filter.
     setZahadyQuestionFilter,
     // Dashboard hero per-field inline edit.
