@@ -461,14 +461,14 @@ document.addEventListener('error',    (ev) => {
       case "historicka-udalost":
         Wiki.renderPage("historicka-udalost", sub); break;
       case "nastaveni":
-        // Settings edits the shared enum vocabulary (attitudes, pin
-        // types, etc.) which affects everyone globally — DM only.
-        // Non-DM visitors who hit this URL get the same "jen pro DM"
-        // stub as the DM panel. The sidebar already hides the link.
-        if (!Role.isDM()) {
-          DmDashboard.render(); // reuses the stub for non-DM viewers
-          break;
-        }
+        // Settings is reachable for any authenticated viewer — the
+        // page itself routes role-aware: Account works for any role
+        // (logout + role chip), Záloha shows read-only ops for non-DM
+        // (download + create-snapshot), the enum-editor tabs render
+        // for anyone but saves silently fail for non-DM (server-side
+        // DM_ONLY_WRITE_TYPES gate). Anonymous visitors are caught
+        // by the route guard at the top of navigate() and shown the
+        // login modal instead.
         Settings.render(); break;
       case "dm":
         // DM-only section. The dashboard renderer short-circuits to

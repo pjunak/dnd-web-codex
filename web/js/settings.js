@@ -58,6 +58,13 @@ export const Settings = (() => {
   ];
 
   let _activeCat       = CATEGORIES[0].id;
+  // True once the user has explicitly picked a tab. Before that, the
+  // landing tab is role-aware: non-DM viewers default to "Účet" (most
+  // useful tab for them — role chip + logout + backup access via the
+  // Záloha tab); DMs default to the first enum editor (their common
+  // workflow). Once a tab is picked, the selection sticks for the
+  // remainder of the session.
+  let _tabPickedByUser = false;
   let _editingId       = null;  // id being edited inline, or '__new__' for add form
   let _snapshots       = [];    // populated by _loadSnapshots()
   // pinTypeId whose marker-icon panel is currently expanded. Only one at
@@ -96,34 +103,68 @@ export const Settings = (() => {
   function render() {
     const el = document.getElementById('main-content');
     if (!el) return;
+    // Role-aware default tab. Non-DM viewers land on Účet (logout +
+    // role chip + access to the Záloha tab); DMs land on the first
+    // enum editor as before. Sticky once the user picks a tab.
+    if (!_tabPickedByUser && !Role.isDM()) {
+      _activeCat = 'account';
+    }
     el.innerHTML = _pageHtml();
     el.scrollTop = 0;
     window.scrollTo(0, 0);
   }
 
+  // Role-aware tab visibility. For DM viewers, all tabs are shown
+  // (enum editors + every SPECIAL tab). For non-DM viewers (player or
+  // DM-in-player-view) we hide the tabs whose actions are DM-only,
+  // surfacing only Account + Záloha — the user's stated request was
+  // "non-DM users need access to logout and backups", and the rest of
+  // the tabs only edit DM-owned shared state.
+  function _visibleEnumTabs() {
+    return Role.isDM() ? CATEGORIES : [];
+  }
+  function _visibleSpecialTabs() {
+    if (Role.isDM()) return SPECIAL_TABS;
+    return SPECIAL_TABS.filter(t => t.id === 'account' || t.id === 'backup');
+  }
+
   function _pageHtml() {
-    const enumTabs = CATEGORIES.map(c => `
+    // Defensive: if `_activeCat` references a tab that's been hidden
+    // by the current role (e.g. DM exits to player view while the
+    // enum editor is open), fall back to Account so the page renders
+    // something useful instead of an empty editor pane.
+    const visibleIds = new Set([
+      ..._visibleEnumTabs().map(c => c.id),
+      ..._visibleSpecialTabs().map(t => t.id),
+    ]);
+    if (!visibleIds.has(_activeCat)) _activeCat = 'account';
+
+    const enumTabs = _visibleEnumTabs().map(c => `
       <button type="button" class="settings-tab ${c.id===_activeCat?'is-active':''}"
         ${dataAction('Settings.selectCategory', c.id)}>
         <span class="settings-tab-icon">${c.icon}</span>
         <span class="settings-tab-label">${esc(c.label)}</span>
         <span class="settings-tab-count">${Store.getEnum(c.id).length}</span>
       </button>`).join('');
-    const specialTabs = SPECIAL_TABS.map(t => `
+    const specialTabs = _visibleSpecialTabs().map(t => `
       <button type="button" class="settings-tab ${t.id===_activeCat?'is-active':''}"
         ${dataAction('Settings.selectCategory', t.id)}>
         <span class="settings-tab-icon">${t.icon}</span>
         <span class="settings-tab-label">${esc(t.label)}</span>
       </button>`).join('');
+    // Separator between enum tabs and special tabs renders only when
+    // both groups are non-empty (DM viewers). Non-DM viewers see just
+    // Account + Záloha, so the separator would be a stray line.
+    const tabsSep = (enumTabs && specialTabs) ? `<div class="settings-tabs-sep"></div>` : '';
     return `
       <div class="settings-page">
         <div class="page-header"><h1>⚙ Nastavení</h1>
-          <div class="subtitle">Číselníky, svět, zálohy.</div>
+          <div class="subtitle">${Role.isDM() ? 'Číselníky, svět, zálohy.' : 'Účet a zálohy.'}</div>
         </div>
         <div class="settings-shell">
           <nav class="settings-tabs">
             ${enumTabs}
-            <div class="settings-tabs-sep"></div>
+            ${tabsSep}
             ${specialTabs}
           </nav>
           <section class="settings-editor">${_editorHtml()}</section>
@@ -505,6 +546,7 @@ export const Settings = (() => {
    */
   function selectCategory(cat) {
     _activeCat = cat;
+    _tabPickedByUser = true;   // honour the user's explicit choice on subsequent renders
     _editingId = null;
     if (cat === 'backup') {
       // Fetch snapshot list before rendering so the table isn't empty
