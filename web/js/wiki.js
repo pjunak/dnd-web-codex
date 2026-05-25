@@ -62,6 +62,13 @@ export const Wiki = (() => {
   let _editingArticle = null;
   function _isCurrentArticleEditing() {
     if (!_editingArticle) return false;
+    // Defence in depth: if the viewer is anonymous, never render the
+    // editor — even if `_editingArticle` is stale from a session
+    // where the viewer was authed (e.g. they logged out via Settings
+    // while still on the article route, so `syncEditRoute` saw a
+    // route-match and didn't clear the state). The Save action would
+    // 401 anyway, but seeing an editor you can't use is a UX glitch.
+    if (Role.isAnonymous()) return false;
     return ('#' + _editingArticle) === window.location.hash;
   }
   /** Enter edit state for `route` (e.g. `/postava/foo`) and re-render.
